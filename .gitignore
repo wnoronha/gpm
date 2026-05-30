@@ -1,0 +1,22 @@
+# Rust
+/target
+Cargo.lock
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Environments
+.env
+
+# Local personal memory (Gemini CLI)
+MEMORY.md
+.ai/
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+*.db
+.beads-credential-key
+.beads/

@@ -238,23 +238,30 @@ pub async fn outdated(
     Ok(())
 }
 
+fn resolve_targets(
+    state: &dyn StateManager,
+    package_name: Option<&str>,
+) -> Result<std::collections::HashMap<String, crate::manifest::Package>> {
+    let packages = state.get_packages()?;
+    if let Some(name) = package_name {
+        let pkg = packages
+            .get(name)
+            .ok_or_else(|| GpmError::PackageNotFoundError(name.to_string()))?;
+        let mut map = std::collections::HashMap::new();
+        map.insert(name.to_string(), pkg.clone());
+        Ok(map)
+    } else {
+        Ok(packages)
+    }
+}
+
 pub async fn upgrade(
     installer: &dyn Installer,
     github: &dyn ReleaseFetcher,
     state: &dyn StateManager,
     args: &UpgradeArgs,
 ) -> Result<()> {
-    let packages = state.get_packages()?;
-    let targets = if let Some(name) = &args.package {
-        let pkg = packages
-            .get(name)
-            .ok_or_else(|| GpmError::PackageNotFoundError(name.clone()))?;
-        let mut map = std::collections::HashMap::new();
-        map.insert(name.clone(), pkg.clone());
-        map
-    } else {
-        packages
-    };
+    let targets = resolve_targets(state, args.package.as_deref())?;
 
     for (name, pkg) in targets {
         let releases = github.get_releases(&pkg.repo).await?;
@@ -350,17 +357,7 @@ pub fn format_list(state: &dyn StateManager) -> Result<String> {
 }
 
 pub fn prune(installer: &dyn Installer, state: &dyn StateManager, args: &PruneArgs) -> Result<()> {
-    let packages = state.get_packages()?;
-    let targets = if let Some(name) = &args.package {
-        let pkg = packages
-            .get(name)
-            .ok_or_else(|| GpmError::PackageNotFoundError(name.clone()))?;
-        let mut map = std::collections::HashMap::new();
-        map.insert(name.clone(), pkg.clone());
-        map
-    } else {
-        packages
-    };
+    let targets = resolve_targets(state, args.package.as_deref())?;
 
     for (name, pkg) in targets {
         let active = pkg.active_version.as_deref();
@@ -422,31 +419,15 @@ pub async fn self_update() -> Result<()> {
 mod tests {
     use std::collections::HashMap;
 
-    use async_trait::async_trait;
     use chrono::Utc;
     use tempfile::tempdir;
 
     use crate::cli::OutdatedArgs;
-    use crate::errors::Result;
-    use crate::github::{Asset, Release, ReleaseFetcher};
+    use crate::github::{Asset, MockReleaseFetcher, Release};
     use crate::manifest::JsonStateManager;
     use crate::manifest::StateManager;
 
     use crate::paths::GpmPaths;
-
-    struct MockReleases {
-        releases: HashMap<String, Vec<Release>>,
-    }
-
-    #[async_trait]
-    impl ReleaseFetcher for MockReleases {
-        async fn get_releases(&self, repo: &str) -> Result<Vec<Release>> {
-            Ok(self.releases.get(repo).cloned().unwrap_or_default())
-        }
-        async fn get_release_by_tag(&self, _repo: &str, _tag: &str) -> Result<Release> {
-            panic!("unexpected call")
-        }
-    }
 
     fn setup_state() -> (JsonStateManager, tempfile::TempDir) {
         let temp = tempdir().unwrap();
@@ -514,9 +495,8 @@ mod tests {
     #[tokio::test]
     async fn test_format_outdated_empty_state() {
         let (state, _tmp) = setup_state();
-        let github = MockReleases {
-            releases: HashMap::new(),
-        };
+        let mut github = MockReleaseFetcher::new();
+        github.expect_get_releases().returning(|_| Ok(vec![]));
         let args = OutdatedArgs { min_age: None };
         let output = super::format_outdated(&github, &state, &args)
             .await
@@ -531,21 +511,24 @@ mod tests {
             .add_package("ripgrep", "BurntSushi/ripgrep", "14.1.0", &[])
             .unwrap();
 
-        let mut releases = HashMap::new();
-        releases.insert(
-            "BurntSushi/ripgrep".to_string(),
-            vec![Release {
-                tag_name: "15.0.0".to_string(),
-                published_at: Utc::now(),
-                assets: vec![Asset {
-                    name: "rg-linux.tar.gz".to_string(),
-                    browser_download_url: "".to_string(),
-                    size: 100,
-                }],
+        let release = Release {
+            tag_name: "15.0.0".to_string(),
+            published_at: Utc::now(),
+            prerelease: false,
+            draft: false,
+            assets: vec![Asset {
+                name: "rg-linux.tar.gz".to_string(),
+                browser_download_url: "".to_string(),
+                size: 100,
             }],
-        );
+        };
 
-        let github = MockReleases { releases };
+        let mut github = MockReleaseFetcher::new();
+        github
+            .expect_get_releases()
+            .with(mockall::predicate::eq("BurntSushi/ripgrep"))
+            .returning(move |_| Ok(vec![release.clone()]));
+
         let args = OutdatedArgs { min_age: None };
         let output = super::format_outdated(&github, &state, &args)
             .await
@@ -568,17 +551,20 @@ mod tests {
             .add_package("ripgrep", "BurntSushi/ripgrep", "15.0.0", &[])
             .unwrap();
 
-        let mut releases = HashMap::new();
-        releases.insert(
-            "BurntSushi/ripgrep".to_string(),
-            vec![Release {
-                tag_name: "15.0.0".to_string(),
-                published_at: Utc::now(),
-                assets: vec![],
-            }],
-        );
+        let release = Release {
+            tag_name: "15.0.0".to_string(),
+            published_at: Utc::now(),
+            prerelease: false,
+            draft: false,
+            assets: vec![],
+        };
 
-        let github = MockReleases { releases };
+        let mut github = MockReleaseFetcher::new();
+        github
+            .expect_get_releases()
+            .with(mockall::predicate::eq("BurntSushi/ripgrep"))
+            .returning(move |_| Ok(vec![release.clone()]));
+
         let args = OutdatedArgs { min_age: None };
         let output = super::format_outdated(&github, &state, &args)
             .await

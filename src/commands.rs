@@ -514,6 +514,8 @@ mod tests {
         let release = Release {
             tag_name: "15.0.0".to_string(),
             published_at: Utc::now(),
+            prerelease: false,
+            draft: false,
             assets: vec![Asset {
                 name: "rg-linux.tar.gz".to_string(),
                 browser_download_url: "".to_string(),
@@ -552,6 +554,8 @@ mod tests {
         let release = Release {
             tag_name: "15.0.0".to_string(),
             published_at: Utc::now(),
+            prerelease: false,
+            draft: false,
             assets: vec![],
         };
 

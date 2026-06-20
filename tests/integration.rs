@@ -47,6 +47,8 @@ mod tests {
             Ok(vec![Release {
                 tag_name: "v1.0".to_string(),
                 published_at: chrono::Utc::now(),
+                prerelease: false,
+                draft: false,
                 assets: vec![Asset {
                     name: "test-bin".to_string(),
                     browser_download_url: "http://example.com/v1.0/test-bin".to_string(),
@@ -58,6 +60,8 @@ mod tests {
             Ok(Release {
                 tag_name: tag.to_string(),
                 published_at: chrono::Utc::now(),
+                prerelease: false,
+                draft: false,
                 assets: vec![Asset {
                     name: "test-bin".to_string(),
                     browser_download_url: format!("http://example.com/{}/test-bin", tag),

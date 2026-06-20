@@ -10,6 +10,10 @@ use std::sync::LazyLock;
 pub struct Release {
     pub tag_name: String,
     pub published_at: DateTime<Utc>,
+    #[serde(default)]
+    pub prerelease: bool,
+    #[serde(default)]
+    pub draft: bool,
     pub assets: Vec<Asset>,
 }
 
@@ -61,12 +65,19 @@ impl<'a> GithubClient<'a> {
 
         let min_age = match min_age_str {
             Some(s) => Self::parse_age(s)?,
-            None => return Ok(Some(releases[0].clone())),
+            None => {
+                for release in &releases {
+                    if !release.draft && !release.prerelease {
+                        return Ok(Some(release.clone()));
+                    }
+                }
+                return Ok(Some(releases[0].clone()));
+            }
         };
 
         let now = Utc::now();
         for release in releases {
-            if now - release.published_at >= min_age {
+            if !release.draft && !release.prerelease && now - release.published_at >= min_age {
                 return Ok(Some(release));
             }
         }
@@ -297,5 +308,28 @@ mod tests {
         let (selected, _) = GithubClient::select_asset(&assets, "linux", "x86_64", Some("helper"));
         let selected = selected.unwrap();
         assert_eq!(selected.name, "gpm-helper-linux-amd64");
+    }
+
+    #[test]
+    fn test_get_valid_release_skips_prerelease() {
+        let releases = vec![
+            Release {
+                tag_name: "v2.0-beta".to_string(),
+                published_at: Utc::now(),
+                prerelease: true,
+                draft: false,
+                assets: vec![],
+            },
+            Release {
+                tag_name: "v1.9".to_string(),
+                published_at: Utc::now(),
+                prerelease: false,
+                draft: false,
+                assets: vec![],
+            },
+        ];
+
+        let result = GithubClient::get_valid_release(releases, None).unwrap().unwrap();
+        assert_eq!(result.tag_name, "v1.9");
     }
 }

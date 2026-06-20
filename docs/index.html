@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GPM - GitHub Package Manager</title>
+    <meta name="description" content="A command-line tool to download and install compiled binaries directly from GitHub Releases. Works locally with static binaries, version management, and symlinking.">
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="bg-glow-1"></div>
+    <div class="bg-glow-2"></div>
+
+    <header>
+        <div class="container">
+            <a href="#" class="logo-group">
+                <div class="logo-icon">G</div>
+                <span class="logo-text">GPM</span>
+                <span class="logo-tag">v0.1.1</span>
+            </a>
+            <ul class="nav-links">
+                <li><a href="#features">Features</a></li>
+                <li><a href="#commands">Commands</a></li>
+                <li><a href="#agents">AGENT.md</a></li>
+                <li><a href="#install">Install</a></li>
+                <li>
+                    <a href="https://github.com/wnoronha/gpm" class="nav-btn" target="_blank" rel="noopener noreferrer">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-github"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"></path></svg>
+                        GitHub
+                    </a>
+                </li>
+            </ul>
+        </div>
+    </header>
+
+    <!-- Hero Section -->
+    <section class="hero">
+        <div class="container">
+            <div class="hero-grid">
+                <div class="hero-content">
+                    <h1>GitHub Package Manager</h1>
+                    <p>A command-line tool to download and install compiled binaries directly from GitHub Releases. GPM manages installations under local folders, scores assets deterministically for your system, and switches versions using symbolic links.</p>
+                    
+                    <div class="hero-cta">
+                        <a href="#install" class="btn-primary">Get Started</a>
+                        <button class="nav-btn" data-copy="gpm install BurntSushi/ripgrep" style="cursor: pointer;">
+                            <code>gpm install BurntSushi/ripgrep</code>
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-left: 0.5rem;"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                        </button>
+                    </div>
+
+                    <div class="hero-stats">
+                        <div class="stat-item">
+                            <span class="stat-val">~/.cache</span>
+                            <span class="stat-lbl">Default Cache Path</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-val">~/.local/bin</span>
+                            <span class="stat-lbl">Symlink Destination</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-val">0</span>
+                            <span class="stat-lbl">Runtime Dependencies</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="hero-image">
+                    <div class="terminal">
+                        <div class="terminal-header">
+                            <div class="terminal-dots">
+                                <div class="dot dot-red"></div>
+                                <div class="dot dot-yellow"></div>
+                                <div class="dot dot-green"></div>
+                            </div>
+                            <div class="terminal-title">gpm install</div>
+                            <button class="terminal-copy" data-copy="gpm install BurntSushi/ripgrep" title="Copy command">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                            </button>
+                        </div>
+                        <div class="terminal-body">
+                            <div><span class="t-prompt">$</span><span class="t-cmd">gpm install BurntSushi/ripgrep</span></div>
+                            <div class="t-output"><span class="t-info">ℹ</span> Fetching release list for BurntSushi/ripgrep...
+<span class="t-info">ℹ</span> Selected release: 14.1.0
+<span class="t-info">ℹ</span> Selecting asset for linux (x86_64)...
+  - ripgrep-14.1.0-x86_64-unknown-linux-musl.tar.gz: 32 pts (Selected)
+<span class="t-info">ℹ</span> Downloading ripgrep-14.1.0-x86_64-unknown-linux-musl.tar.gz...
+[========================================] 100% (5.2 MB / 5.2 MB)
+<span class="t-info">ℹ</span> Extracting archive...
+<span class="t-info">ℹ</span> Scanning files using magic bytes...
+  - Found ELF executable: 'rg'
+<span class="t-info">ℹ</span> Symlinking binary to ~/.local/bin/rg
+<span class="t-success">✔</span> Installation complete: ripgrep 14.1.0 -> ~/.local/bin/rg</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Features Section -->
+    <section class="features" id="features">
+        <div class="container">
+            <div class="section-header">
+                <h2>Technical Characteristics</h2>
+                <p>Architected for reliability, isolation, and predictability on Unix and Windows systems.</p>
+            </div>
+            
+            <div class="grid-3">
+                <div class="card">
+                    <div class="card-icon">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect><rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect><line x1="6" y1="6" x2="6.01" y2="6"></line><line x1="6" y1="18" x2="6.01" y2="18"></line></svg>
+                    </div>
+                    <h3>Static Binary Compilation</h3>
+                    <p>Compiled in Rust with static TLS. Executes without dynamically linked runtime dependencies or local shared libraries (like OpenSSL), resolving cross-compilation target constraints.</p>
+                </div>
+
+                <div class="card">
+                    <div class="card-icon">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2?"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>
+                    </div>
+                    <h3>Storage Isolation</h3>
+                    <p>Stores package versions within independent directories under <code>~/.cache/gpm/&lt;pkg&gt;/&lt;ver&gt;</code>. Multiple downloaded versions can be cached concurrently without interference.</p>
+                </div>
+
+                <div class="card">
+                    <div class="card-icon">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg>
+                    </div>
+                    <h3>Symlink Linking</h3>
+                    <p>Uses symbolic links from cached binaries to <code>~/.local/bin</code> to activate a version. Falling back to file copy on Windows if administrative symlink permissions are absent.</p>
+                </div>
+
+                <div class="card">
+                    <div class="card-icon">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
+                    </div>
+                    <h3>Heuristic Asset Selection</h3>
+                    <p>Scores GitHub Release asset names dynamically based on CPU architectures and host OS string matches. Prioritizes static binaries and archives. <a href="ASSET_SELECTION.md" style="color: var(--accent); text-decoration: none;">View criteria rules &rarr;</a></p>
+                </div>
+
+                <div class="card">
+                    <div class="card-icon">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path><polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline><line x1="12" y1="22.08" x2="12" y2="12"></line></svg>
+                    </div>
+                    <h3>Magic Byte Verification</h3>
+                    <p>Scans binary file signatures (headers) inside downloaded archives. Identifies ELF, PE, and Mach-O executables even if they lack file extensions or executable bits in the archive.</p>
+                </div>
+
+                <div class="card">
+                    <div class="card-icon">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z"></path><path d="M22 12H18M6 12H2M12 6V2M12 22v-4"></path></svg>
+                    </div>
+                    <h3>Space-Resilient Checksums</h3>
+                    <p>Verifies SHA-256 integrity files. Tolerates arbitrary spaces, relative path prefixes, and formatting variations in checksum files commonly published on GitHub.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Commands Explorer Section -->
+    <section class="explorer" id="commands">
+        <div class="container">
+            <div class="section-header">
+                <h2>CLI Commands Explorer</h2>
+                <p>Interact with the controls below to inspect GPM's commands, options, and sample output.</p>
+            </div>
+
+            <div class="explorer-card">
+                <div class="explorer-sidebar">
+                    <div class="sidebar-title">GPM CLI Commands</div>
+                    <div class="cmd-tabs">
+                        <button class="cmd-tab active" data-cmd="install">
+                            install <span class="cmd-tab-indicator">cmd</span>
+                        </button>
+                        <button class="cmd-tab" data-cmd="uninstall">
+                            uninstall <span class="cmd-tab-indicator">cmd</span>
+                        </button>
+                        <button class="cmd-tab" data-cmd="link">
+                            link <span class="cmd-tab-indicator">cmd</span>
+                        </button>
+                        <button class="cmd-tab" data-cmd="list">
+                            list <span class="cmd-tab-indicator">cmd</span>
+                        </button>
+                        <button class="cmd-tab" data-cmd="outdated">
+                            outdated <span class="cmd-tab-indicator">cmd</span>
+                        </button>
+                        <button class="cmd-tab" data-cmd="upgrade">
+                            upgrade <span class="cmd-tab-indicator">cmd</span>
+                        </button>
+                        <button class="cmd-tab" data-cmd="prune">
+                            prune <span class="cmd-tab-indicator">cmd</span>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="explorer-content">
+                    <div class="explorer-detail">
+                        <h3 id="exp-title">gpm install</h3>
+                        <p class="description" id="exp-desc">Downloads, extracts, and installs a compiled binary from the specified GitHub repository.</p>
+                        
+                        <h4 class="explorer-options-title" id="exp-opts-title">Command Options</h4>
+                        <ul class="explorer-options" id="exp-opts-list">
+                            <!-- Populated dynamically via JS -->
+                        </ul>
+                    </div>
+
+                    <div class="explorer-terminal">
+                        <div class="terminal">
+                            <div class="terminal-header">
+                                <div class="terminal-dots">
+                                    <div class="dot dot-red"></div>
+                                    <div class="dot dot-yellow"></div>
+                                    <div class="dot dot-green"></div>
+                                </div>
+                                <div class="terminal-title">Terminal Console</div>
+                            </div>
+                            <div class="terminal-body" id="exp-terminal">
+                                <!-- Populated dynamically via JS -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- AGENT.md Integration Section -->
+    <section class="agent" id="agents">
+        <div class="container">
+            <div class="agent-grid">
+                <div class="agent-text">
+                    <h2>AI-Agent and Developer Safety Protocols</h2>
+                    <p>GPM is built with instructions structured in <a href="file:///home/ubuntu/workspace/gpm/AGENTS.md" style="color: var(--accent); text-decoration: none; font-weight: 500;">AGENT.md</a>. This configures automated coding agents (like Claude Code or Gemini Antigravity) and human contributors to follow strict development rules and maintain codebase sanity:</p>
+                    <ul>
+                        <li><strong>Architectural Mandates:</strong> Ensures all modifications adhere to Tokio-driven non-blocking I/O and static binary constraints (no dynamic TLS).</li>
+                        <li><strong>Pre-Push Integrity Checks:</strong> Enforces compilation of test suites, code formatting checks, and clippy warning prohibitions before any branch update.</li>
+                        <li><strong>Task Tracking:</strong> Defines integration protocols with <code>bd</code> (Beads), managing claims and issues inside local Dolt DB databases.</li>
+                    </ul>
+                </div>
+
+                <div class="agent-steps">
+                    <div class="agent-step">
+                        <div class="step-num">1</div>
+                        <div class="step-content">
+                            <h4>Claim Work via Beads</h4>
+                            <p>Development tasks are selected and claimed within the database tracking layer.</p>
+                            <code>bd update &lt;issue-id&gt; --claim</code>
+                        </div>
+                    </div>
+
+                    <div class="agent-step">
+                        <div class="step-num">2</div>
+                        <div class="step-content">
+                            <h4>Write and Implement Features</h4>
+                            <p>Source files are edited according to constraints defined in <code>AGENT.md</code>.</p>
+                            <code>src/installer.rs, src/github.rs</code>
+                        </div>
+                    </div>
+
+                    <div class="agent-step">
+                        <div class="step-num">3</div>
+                        <div class="step-content">
+                            <h4>Execute Quality Gate</h4>
+                            <p>Enforce clean building, standard formatting, and test execution.</p>
+                            <code>cargo fmt &amp;&amp; cargo clippy &amp;&amp; cargo test</code>
+                        </div>
+                    </div>
+
+                    <div class="agent-step">
+                        <div class="step-num">4</div>
+                        <div class="step-content">
+                            <h4>Close and Sync Session</h4>
+                            <p>Commit changes, close the issue tracker ticket, and push target branches.</p>
+                            <code>bd close &lt;issue-id&gt; &amp;&amp; git push</code>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Install & Getting Started Section -->
+    <section class="install" id="install">
+        <div class="container">
+            <div class="section-header">
+                <h2>Installation Methods</h2>
+                <p>Deploy GPM on your system using Rust compilation tools or compiled binaries.</p>
+            </div>
+
+            <div class="install-methods">
+                <div class="method-card">
+                    <h3>Compile From Source</h3>
+                    <p>Build GPM locally using the Cargo packager. Requires Rust toolchain (edition 2024).</p>
+                    
+                    <div class="terminal">
+                        <div class="terminal-header">
+                            <div class="terminal-dots">
+                                <div class="dot dot-red"></div>
+                                <div class="dot dot-yellow"></div>
+                                <div class="dot dot-green"></div>
+                            </div>
+                            <div class="terminal-title">Cargo Compile</div>
+                            <button class="terminal-copy" data-copy="git clone https://github.com/wnoronha/gpm.git && cd gpm && cargo install --path ." title="Copy command">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                            </button>
+                        </div>
+                        <div class="terminal-body">
+                            <div><span class="t-prompt">$</span><span class="t-cmd">git clone https://github.com/wnoronha/gpm.git</span></div>
+                            <div><span class="t-prompt">$</span><span class="t-cmd">cd gpm</span></div>
+                            <div><span class="t-prompt">$</span><span class="t-cmd">cargo install --path .</span></div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="method-card">
+                    <h3>Deploy Compiled Binary</h3>
+                    <p>Obtain the pre-compiled version for your system directly from GitHub Releases. If running macOS, remove the quarantine attribute before execution.</p>
+                    
+                    <div class="terminal">
+                        <div class="terminal-header">
+                            <div class="terminal-dots">
+                                <div class="dot dot-red"></div>
+                                <div class="dot dot-yellow"></div>
+                                <div class="dot dot-green"></div>
+                            </div>
+                            <div class="terminal-title">macOS Quarantine Bypass</div>
+                            <button class="terminal-copy" data-copy="xattr -d com.apple.quarantine gpm" title="Copy command">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                            </button>
+                        </div>
+                        <div class="terminal-body">
+                            <div><span class="t-prompt">$</span><span class="t-cmd"># After downloading compiled binary:</span></div>
+                            <div><span class="t-prompt">$</span><span class="t-cmd">xattr -d com.apple.quarantine gpm</span></div>
+                            <div><span class="t-prompt">$</span><span class="t-cmd">chmod +x gpm</span></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer>
+        <div class="container">
+            <div class="footer-content">
+                <p>&copy; 2026 GPM Contributors. Released under the MIT License.</p>
+                <div class="footer-links">
+                    <a href="https://github.com/wnoronha/gpm" target="_blank" rel="noopener noreferrer">GitHub</a>
+                    <a href="#features">Features</a>
+                    <a href="#commands">CLI Reference</a>
+                    <a href="#agents">AGENT.md Guidelines</a>
+                </div>
+            </div>
+        </div>
+    </footer>
+
+    <script src="app.js"></script>
+</body>
+</html>

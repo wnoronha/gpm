@@ -1,38 +1,49 @@
 #[cfg(test)]
 mod tests {
-    use async_trait::async_trait;
-    use serde_json::{Value, json};
+    use serde_json::json;
     use std::fs;
     use tempfile::tempdir;
 
     use gpm::cli::{InstallArgs, LinkArgs, UninstallArgs, UnlinkArgs};
     use gpm::commands;
-    use gpm::errors::Result;
     use gpm::extractor::ArchiveExtractor;
-    use gpm::github::{Asset, Release, ReleaseFetcher};
+    use gpm::github::{Asset, Release};
     use gpm::installer::GpmInstaller;
     use gpm::manifest::JsonStateManager;
-    use gpm::network::HttpClient;
     use gpm::paths::GpmPaths;
 
-    struct MockHttpClient;
-
-    #[async_trait]
-    impl HttpClient for MockHttpClient {
-        async fn fetch_json(&self, _url: &str) -> Result<Value> {
-            Ok(json!([]))
-        }
-        async fn download_file(&self, _url: &str, dest: &std::path::Path) -> Result<()> {
-            fs::write(dest, b"\x7fELFfakebinary")?;
-            Ok(())
+    mockall::mock! {
+        pub HttpClient {}
+        #[async_trait::async_trait]
+        impl gpm::network::HttpClient for HttpClient {
+            async fn fetch_json(&self, url: &str) -> gpm::errors::Result<serde_json::Value>;
+            async fn download_file(&self, url: &str, dest: &std::path::Path) -> gpm::errors::Result<()>;
         }
     }
 
-    struct MockGithubClient;
+    mockall::mock! {
+        pub ReleaseFetcher {}
+        #[async_trait::async_trait]
+        impl gpm::github::ReleaseFetcher for ReleaseFetcher {
+            async fn get_releases(&self, repo: &str) -> gpm::errors::Result<Vec<Release>>;
+            async fn get_release_by_tag(&self, repo: &str, tag: &str) -> gpm::errors::Result<Release>;
+        }
+    }
 
-    #[async_trait]
-    impl ReleaseFetcher for MockGithubClient {
-        async fn get_releases(&self, _repo: &str) -> Result<Vec<Release>> {
+    #[tokio::test]
+    async fn test_full_lifecycle() {
+        let temp = tempdir().unwrap();
+        let paths = GpmPaths::with_home(temp.path());
+
+        let mut http = MockHttpClient::new();
+        http.expect_fetch_json().returning(|_| Ok(json!([])));
+        http.expect_download_file().returning(|_, dest| {
+            fs::write(dest, b"\x7fELFfakebinary")?;
+            Ok(())
+        });
+
+        let mut github = MockReleaseFetcher::new();
+        github.expect_get_releases().returning(|_| {
             Ok(vec![Release {
                 tag_name: "v1.0".to_string(),
                 published_at: chrono::Utc::now(),
@@ -42,8 +53,8 @@ mod tests {
                     size: 100,
                 }],
             }])
-        }
-        async fn get_release_by_tag(&self, _repo: &str, tag: &str) -> Result<Release> {
+        });
+        github.expect_get_release_by_tag().returning(|_, tag| {
             Ok(Release {
                 tag_name: tag.to_string(),
                 published_at: chrono::Utc::now(),
@@ -53,16 +64,8 @@ mod tests {
                     size: 100,
                 }],
             })
-        }
-    }
+        });
 
-    #[tokio::test]
-    async fn test_full_lifecycle() {
-        let temp = tempdir().unwrap();
-        let paths = GpmPaths::with_home(temp.path());
-
-        let http = MockHttpClient;
-        let github = MockGithubClient;
         let extractor = ArchiveExtractor::new();
         let installer = GpmInstaller::new(&http, &extractor, paths.clone());
         let state = JsonStateManager::new(paths.clone());

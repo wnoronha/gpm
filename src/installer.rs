@@ -148,12 +148,27 @@ impl<'a> Installer for GpmInstaller<'a> {
 
         if self.extractor.extract(&download_path, &version_dir).is_ok() {
             let binaries = self.extractor.find_binaries(&version_dir)?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                for bin in &binaries {
+                    let mut perms = fs::metadata(bin)?.permissions();
+                    if perms.mode() & 0o111 == 0 {
+                        perms.set_mode(perms.mode() | 0o111);
+                        fs::set_permissions(bin, perms)?;
+                    }
+                }
+            }
             Ok(binaries)
         } else {
             // Assume the downloaded file IS the binary
             let dest_path = version_dir.join(asset_name);
             if let Err(e) = fs::rename(&download_path, &dest_path) {
-                if e.raw_os_error() == Some(18) {
+                let is_cross_device = e.kind() == std::io::ErrorKind::CrossesDevices
+                    || e.raw_os_error() == Some(18) // EXDEV (Unix)
+                    || e.raw_os_error() == Some(17); // ERROR_NOT_SAME_DEVICE (Windows)
+
+                if is_cross_device {
                     fs::copy(&download_path, &dest_path)?;
                     let _ = fs::remove_file(&download_path);
                 } else {
@@ -252,36 +267,10 @@ impl<'a> Installer for GpmInstaller<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::extractor::Extractor;
-    use crate::network::HttpClient;
-    use async_trait::async_trait;
-    use serde_json::Value;
+    use crate::extractor::MockExtractor;
+    use crate::network::MockHttpClient;
     use std::io::Write;
     use tempfile::tempdir;
-
-    struct MockHttpClient;
-    #[async_trait]
-    impl HttpClient for MockHttpClient {
-        async fn fetch_json(&self, _url: &str) -> Result<Value> {
-            unimplemented!()
-        }
-        async fn download_file(&self, _url: &str, _dest: &Path) -> Result<()> {
-            unimplemented!()
-        }
-    }
-
-    struct MockExtractor;
-    impl Extractor for MockExtractor {
-        fn extract(&self, _archive_path: &Path, _dest: &Path) -> Result<()> {
-            unimplemented!()
-        }
-        fn find_binaries(&self, _dir: &Path) -> Result<Vec<PathBuf>> {
-            unimplemented!()
-        }
-        fn is_executable(&self, _path: &Path) -> Result<bool> {
-            unimplemented!()
-        }
-    }
 
     #[test]
     fn test_verify_checksum_single_line() {
@@ -292,8 +281,8 @@ mod tests {
 
         let hash = "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"; // sha256 of "hello world"
 
-        let http = MockHttpClient;
-        let extractor = MockExtractor;
+        let http = MockHttpClient::new();
+        let extractor = MockExtractor::new();
         let paths = GpmPaths::with_home(temp.path());
         let installer = GpmInstaller::new(&http, &extractor, paths);
 
@@ -312,8 +301,8 @@ mod tests {
         let hash = "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9";
         let checksum_content = format!("{}  test.bin\notherhash  other.bin", hash);
 
-        let http = MockHttpClient;
-        let extractor = MockExtractor;
+        let http = MockHttpClient::new();
+        let extractor = MockExtractor::new();
         let paths = GpmPaths::with_home(temp.path());
         let installer = GpmInstaller::new(&http, &extractor, paths);
 
@@ -331,8 +320,8 @@ mod tests {
 
         let hash = "wronghash";
 
-        let http = MockHttpClient;
-        let extractor = MockExtractor;
+        let http = MockHttpClient::new();
+        let extractor = MockExtractor::new();
         let paths = GpmPaths::with_home(temp.path());
         let installer = GpmInstaller::new(&http, &extractor, paths);
 

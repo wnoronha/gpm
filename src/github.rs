@@ -20,6 +20,7 @@ pub struct Asset {
     pub size: u64,
 }
 
+#[cfg_attr(test, mockall::automock)]
 #[async_trait]
 pub trait ReleaseFetcher: Send + Sync {
     async fn get_releases(&self, repo: &str) -> Result<Vec<Release>>;

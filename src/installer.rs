@@ -340,10 +340,27 @@ fn symlink(src: &Path, dst: &Path) -> Result<()> {
     }
     #[cfg(windows)]
     {
-        if src.is_dir() {
-            std::os::windows::fs::symlink_dir(src, dst)?;
+        let res = if src.is_dir() {
+            std::os::windows::fs::symlink_dir(src, dst)
         } else {
-            std::os::windows::fs::symlink_file(src, dst)?;
+            std::os::windows::fs::symlink_file(src, dst)
+        };
+
+        if let Err(e) = res {
+            if e.kind() == std::io::ErrorKind::PermissionDenied {
+                tracing::warn!(
+                    "Symlink permission denied on Windows. Falling back to copy. Source: {:?}, Destination: {:?}",
+                    src,
+                    dst
+                );
+                if src.is_dir() {
+                    return Err(e.into());
+                } else {
+                    std::fs::copy(src, dst)?;
+                }
+            } else {
+                return Err(e.into());
+            }
         }
     }
     Ok(())

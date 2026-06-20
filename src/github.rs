@@ -329,7 +329,9 @@ mod tests {
             },
         ];
 
-        let result = GithubClient::get_valid_release(releases, None).unwrap().unwrap();
+        let result = GithubClient::get_valid_release(releases, None)
+            .unwrap()
+            .unwrap();
         assert_eq!(result.tag_name, "v1.9");
     }
 }

@@ -64,28 +64,38 @@ impl<'a> GpmInstaller<'a> {
 
         // Parse checksum file. It could be:
         // 1. Just the hash (if the checksum file was for this specific asset)
-        // 2. Lines of "hash  filename"
+        // 2. Lines of "hash  filename" (separated by whitespace, potentially containing spaces or relative paths)
         for line in checksum_content.lines() {
-            let parts: Vec<&str> = line.split_whitespace().collect();
-            if parts.is_empty() {
+            let line = line.trim();
+            if line.is_empty() {
                 continue;
             }
 
-            if parts.len() == 1 {
-                // If it's a single hash, assume it's for our asset
-                if parts[0].to_lowercase() == hash_hex {
+            let mut parts = line.splitn(2, |c: char| c.is_whitespace());
+            let hash_val = match parts.next() {
+                Some(h) => h,
+                None => continue,
+            };
+
+            let remaining = parts.next().unwrap_or("").trim_start();
+            if remaining.is_empty() {
+                if hash_val.to_lowercase() == hash_hex {
                     return Ok(());
                 }
             } else {
-                // Check if the filename matches
-                let filename = parts[1].trim_start_matches('*');
+                let cleaned_path = remaining.trim_start_matches('*');
+                let filename = Path::new(cleaned_path)
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or(cleaned_path);
+
                 if filename == asset_name {
-                    if parts[0].to_lowercase() == hash_hex {
+                    if hash_val.to_lowercase() == hash_hex {
                         return Ok(());
                     } else {
                         return Err(GpmError::Unknown(format!(
                             "Checksum mismatch for {}: expected {}, got {}",
-                            asset_name, parts[0], hash_hex
+                            asset_name, hash_val, hash_hex
                         )));
                     }
                 }
@@ -330,6 +340,46 @@ mod tests {
                 .verify_checksum(&file_path, "test.bin", hash)
                 .is_err()
         );
+    }
+
+    #[test]
+    fn test_verify_checksum_filename_with_spaces() {
+        let temp = tempdir().unwrap();
+        let file_path = temp.path().join("my cool asset.bin");
+        let mut f = fs::File::create(&file_path).unwrap();
+        f.write_all(b"hello world").unwrap();
+
+        let hash = "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9";
+        let checksum_content = format!("{}  my cool asset.bin\notherhash  other.bin", hash);
+
+        let http = MockHttpClient::new();
+        let extractor = MockExtractor::new();
+        let paths = GpmPaths::with_home(temp.path());
+        let installer = GpmInstaller::new(&http, &extractor, paths);
+
+        installer
+            .verify_checksum(&file_path, "my cool asset.bin", &checksum_content)
+            .unwrap();
+    }
+
+    #[test]
+    fn test_verify_checksum_with_relative_paths() {
+        let temp = tempdir().unwrap();
+        let file_path = temp.path().join("asset.bin");
+        let mut f = fs::File::create(&file_path).unwrap();
+        f.write_all(b"hello world").unwrap();
+
+        let hash = "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9";
+        let checksum_content = format!("{}  ./build/dist/asset.bin\notherhash  other.bin", hash);
+
+        let http = MockHttpClient::new();
+        let extractor = MockExtractor::new();
+        let paths = GpmPaths::with_home(temp.path());
+        let installer = GpmInstaller::new(&http, &extractor, paths);
+
+        installer
+            .verify_checksum(&file_path, "asset.bin", &checksum_content)
+            .unwrap();
     }
 }
 

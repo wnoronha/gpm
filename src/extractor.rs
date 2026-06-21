@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use tar::Archive;
 use zip::ZipArchive;
 
+#[cfg_attr(test, mockall::automock)]
 pub trait Extractor: Send + Sync {
     fn extract(&self, archive_path: &Path, dest: &Path) -> Result<()>;
     fn find_binaries(&self, dir: &Path) -> Result<Vec<PathBuf>>;
@@ -138,13 +139,6 @@ impl Extractor for ArchiveExtractor {
             || (&buffer[0..2] == b"MZ");
 
         if is_binary {
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                let mut perms = fs::metadata(path)?.permissions();
-                perms.set_mode(perms.mode() | 0o111);
-                fs::set_permissions(path, perms)?;
-            }
             return Ok(true);
         }
 

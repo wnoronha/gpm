@@ -64,28 +64,38 @@ impl<'a> GpmInstaller<'a> {
 
         // Parse checksum file. It could be:
         // 1. Just the hash (if the checksum file was for this specific asset)
-        // 2. Lines of "hash  filename"
+        // 2. Lines of "hash  filename" (separated by whitespace, potentially containing spaces or relative paths)
         for line in checksum_content.lines() {
-            let parts: Vec<&str> = line.split_whitespace().collect();
-            if parts.is_empty() {
+            let line = line.trim();
+            if line.is_empty() {
                 continue;
             }
 
-            if parts.len() == 1 {
-                // If it's a single hash, assume it's for our asset
-                if parts[0].to_lowercase() == hash_hex {
+            let mut parts = line.splitn(2, |c: char| c.is_whitespace());
+            let hash_val = match parts.next() {
+                Some(h) => h,
+                None => continue,
+            };
+
+            let remaining = parts.next().unwrap_or("").trim_start();
+            if remaining.is_empty() {
+                if hash_val.to_lowercase() == hash_hex {
                     return Ok(());
                 }
             } else {
-                // Check if the filename matches
-                let filename = parts[1].trim_start_matches('*');
+                let cleaned_path = remaining.trim_start_matches('*');
+                let filename = Path::new(cleaned_path)
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or(cleaned_path);
+
                 if filename == asset_name {
-                    if parts[0].to_lowercase() == hash_hex {
+                    if hash_val.to_lowercase() == hash_hex {
                         return Ok(());
                     } else {
                         return Err(GpmError::Unknown(format!(
                             "Checksum mismatch for {}: expected {}, got {}",
-                            asset_name, parts[0], hash_hex
+                            asset_name, hash_val, hash_hex
                         )));
                     }
                 }
@@ -148,12 +158,27 @@ impl<'a> Installer for GpmInstaller<'a> {
 
         if self.extractor.extract(&download_path, &version_dir).is_ok() {
             let binaries = self.extractor.find_binaries(&version_dir)?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                for bin in &binaries {
+                    let mut perms = fs::metadata(bin)?.permissions();
+                    if perms.mode() & 0o111 == 0 {
+                        perms.set_mode(perms.mode() | 0o111);
+                        fs::set_permissions(bin, perms)?;
+                    }
+                }
+            }
             Ok(binaries)
         } else {
             // Assume the downloaded file IS the binary
             let dest_path = version_dir.join(asset_name);
             if let Err(e) = fs::rename(&download_path, &dest_path) {
-                if e.raw_os_error() == Some(18) {
+                let is_cross_device = e.kind() == std::io::ErrorKind::CrossesDevices
+                    || e.raw_os_error() == Some(18) // EXDEV (Unix)
+                    || e.raw_os_error() == Some(17); // ERROR_NOT_SAME_DEVICE (Windows)
+
+                if is_cross_device {
                     fs::copy(&download_path, &dest_path)?;
                     let _ = fs::remove_file(&download_path);
                 } else {
@@ -252,36 +277,10 @@ impl<'a> Installer for GpmInstaller<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::extractor::Extractor;
-    use crate::network::HttpClient;
-    use async_trait::async_trait;
-    use serde_json::Value;
+    use crate::extractor::MockExtractor;
+    use crate::network::MockHttpClient;
     use std::io::Write;
     use tempfile::tempdir;
-
-    struct MockHttpClient;
-    #[async_trait]
-    impl HttpClient for MockHttpClient {
-        async fn fetch_json(&self, _url: &str) -> Result<Value> {
-            unimplemented!()
-        }
-        async fn download_file(&self, _url: &str, _dest: &Path) -> Result<()> {
-            unimplemented!()
-        }
-    }
-
-    struct MockExtractor;
-    impl Extractor for MockExtractor {
-        fn extract(&self, _archive_path: &Path, _dest: &Path) -> Result<()> {
-            unimplemented!()
-        }
-        fn find_binaries(&self, _dir: &Path) -> Result<Vec<PathBuf>> {
-            unimplemented!()
-        }
-        fn is_executable(&self, _path: &Path) -> Result<bool> {
-            unimplemented!()
-        }
-    }
 
     #[test]
     fn test_verify_checksum_single_line() {
@@ -292,8 +291,8 @@ mod tests {
 
         let hash = "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"; // sha256 of "hello world"
 
-        let http = MockHttpClient;
-        let extractor = MockExtractor;
+        let http = MockHttpClient::new();
+        let extractor = MockExtractor::new();
         let paths = GpmPaths::with_home(temp.path());
         let installer = GpmInstaller::new(&http, &extractor, paths);
 
@@ -312,8 +311,8 @@ mod tests {
         let hash = "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9";
         let checksum_content = format!("{}  test.bin\notherhash  other.bin", hash);
 
-        let http = MockHttpClient;
-        let extractor = MockExtractor;
+        let http = MockHttpClient::new();
+        let extractor = MockExtractor::new();
         let paths = GpmPaths::with_home(temp.path());
         let installer = GpmInstaller::new(&http, &extractor, paths);
 
@@ -331,8 +330,8 @@ mod tests {
 
         let hash = "wronghash";
 
-        let http = MockHttpClient;
-        let extractor = MockExtractor;
+        let http = MockHttpClient::new();
+        let extractor = MockExtractor::new();
         let paths = GpmPaths::with_home(temp.path());
         let installer = GpmInstaller::new(&http, &extractor, paths);
 
@@ -341,6 +340,46 @@ mod tests {
                 .verify_checksum(&file_path, "test.bin", hash)
                 .is_err()
         );
+    }
+
+    #[test]
+    fn test_verify_checksum_filename_with_spaces() {
+        let temp = tempdir().unwrap();
+        let file_path = temp.path().join("my cool asset.bin");
+        let mut f = fs::File::create(&file_path).unwrap();
+        f.write_all(b"hello world").unwrap();
+
+        let hash = "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9";
+        let checksum_content = format!("{}  my cool asset.bin\notherhash  other.bin", hash);
+
+        let http = MockHttpClient::new();
+        let extractor = MockExtractor::new();
+        let paths = GpmPaths::with_home(temp.path());
+        let installer = GpmInstaller::new(&http, &extractor, paths);
+
+        installer
+            .verify_checksum(&file_path, "my cool asset.bin", &checksum_content)
+            .unwrap();
+    }
+
+    #[test]
+    fn test_verify_checksum_with_relative_paths() {
+        let temp = tempdir().unwrap();
+        let file_path = temp.path().join("asset.bin");
+        let mut f = fs::File::create(&file_path).unwrap();
+        f.write_all(b"hello world").unwrap();
+
+        let hash = "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9";
+        let checksum_content = format!("{}  ./build/dist/asset.bin\notherhash  other.bin", hash);
+
+        let http = MockHttpClient::new();
+        let extractor = MockExtractor::new();
+        let paths = GpmPaths::with_home(temp.path());
+        let installer = GpmInstaller::new(&http, &extractor, paths);
+
+        installer
+            .verify_checksum(&file_path, "asset.bin", &checksum_content)
+            .unwrap();
     }
 }
 
@@ -351,10 +390,27 @@ fn symlink(src: &Path, dst: &Path) -> Result<()> {
     }
     #[cfg(windows)]
     {
-        if src.is_dir() {
-            std::os::windows::fs::symlink_dir(src, dst)?;
+        let res = if src.is_dir() {
+            std::os::windows::fs::symlink_dir(src, dst)
         } else {
-            std::os::windows::fs::symlink_file(src, dst)?;
+            std::os::windows::fs::symlink_file(src, dst)
+        };
+
+        if let Err(e) = res {
+            if e.kind() == std::io::ErrorKind::PermissionDenied {
+                tracing::warn!(
+                    "Symlink permission denied on Windows. Falling back to copy. Source: {:?}, Destination: {:?}",
+                    src,
+                    dst
+                );
+                if src.is_dir() {
+                    return Err(e.into());
+                } else {
+                    std::fs::copy(src, dst)?;
+                }
+            } else {
+                return Err(e.into());
+            }
         }
     }
     Ok(())

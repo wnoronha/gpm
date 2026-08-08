@@ -436,11 +436,14 @@ mod tests {
 
         let bin_link = paths.bin_dir().join("my_bin");
         assert!(bin_link.exists());
-        
+
         #[cfg(unix)]
         {
             assert!(fs::symlink_metadata(&bin_link).unwrap().is_symlink());
-            assert_eq!(fs::read_link(&bin_link).unwrap(), paths.cache_dir().canonicalize().unwrap().join("my_bin"));
+            assert_eq!(
+                fs::read_link(&bin_link).unwrap(),
+                paths.cache_dir().canonicalize().unwrap().join("my_bin")
+            );
         }
     }
 
@@ -466,7 +469,7 @@ mod tests {
 
         assert!(bin_file.exists());
         assert_eq!(fs::read_to_string(&bin_file).unwrap(), "new");
-        
+
         #[cfg(unix)]
         {
             assert!(fs::symlink_metadata(&bin_file).unwrap().is_symlink());
@@ -507,8 +510,10 @@ mod tests {
         fs::write(&cache_file, b"test").unwrap();
 
         let installer = GpmInstaller::new(http, extractor, paths.clone());
-        installer.link("test_pkg", "v1.0", &[cache_file.clone()]).unwrap();
-        
+        installer
+            .link("test_pkg", "v1.0", &[cache_file.clone()])
+            .unwrap();
+
         let bin_file = paths.bin_dir().join("my_bin");
         assert!(bin_file.exists());
 
@@ -529,18 +534,18 @@ mod tests {
 
         let cache_file = paths.cache_dir().join("my_bin");
         fs::write(&cache_file, b"test").unwrap();
-        
+
         let bin_file = paths.bin_dir().join("my_bin");
         fs::write(&bin_file, b"regular").unwrap();
 
         let installer = GpmInstaller::new(http, extractor, paths.clone());
-        
+
         // This shouldn't error, and shouldn't remove the regular file
         installer.unlink("test_pkg", &[cache_file.clone()]).unwrap();
 
         assert!(bin_file.exists());
         assert_eq!(fs::read_to_string(&bin_file).unwrap(), "regular");
-        
+
         // Also test when it doesn't exist at all
         fs::remove_file(&bin_file).unwrap();
         installer.unlink("test_pkg", &[cache_file]).unwrap();

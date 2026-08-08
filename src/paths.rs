@@ -78,7 +78,13 @@ impl GpmPaths {
     }
 
     pub fn bin_dir(&self) -> PathBuf {
-        self.home_dir.join(".local").join("bin")
+        if let Ok(gpm_bin) = env::var("GPM_BIN_DIR") {
+            return PathBuf::from(gpm_bin);
+        }
+        if self.is_custom {
+            return self.home_dir.join(".local").join("bin");
+        }
+        dirs::executable_dir().unwrap_or_else(|| self.home_dir.join(".local").join("bin"))
     }
 
     pub fn ensure_bin_dir(&self) -> Result<PathBuf> {
@@ -106,5 +112,24 @@ mod tests {
         let temp_path = temp.path();
         let paths = GpmPaths::with_home(temp_path);
         assert_eq!(paths.home_dir(), temp_path);
+    }
+
+    #[test]
+    fn test_gpm_home_env_var() {
+        let temp = tempdir().unwrap();
+        let temp_path = temp.path();
+        unsafe {
+            env::set_var("GPM_HOME", temp_path);
+        }
+
+        let paths = GpmPaths::new();
+        assert_eq!(paths.home_dir(), temp_path);
+        assert_eq!(paths.config_dir(), temp_path.join(".config").join("gpm"));
+        assert_eq!(paths.cache_dir(), temp_path.join(".cache").join("gpm"));
+        assert_eq!(paths.bin_dir(), temp_path.join(".local").join("bin"));
+
+        unsafe {
+            env::remove_var("GPM_HOME");
+        }
     }
 }

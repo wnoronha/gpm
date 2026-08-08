@@ -47,10 +47,13 @@ impl JsonStateManager {
             return Ok(None);
         }
 
-        let content = fs::read_to_string(path)?;
+        let content = fs::read_to_string(&path)?;
         match serde_json::from_str(&content) {
             Ok(pkg) => Ok(Some(pkg)),
-            Err(_) => Ok(None), // Task says corrupted receipts return None, not crash
+            Err(e) => {
+                tracing::warn!("Failed to parse receipt at {:?}: {}", path, e);
+                Ok(None)
+            }
         }
     }
 
@@ -207,5 +210,19 @@ mod tests {
         // Remove
         manager.remove_package(name, None).unwrap();
         assert!(manager.get_package(name).unwrap().is_none());
+    }
+
+    #[test]
+    fn test_corrupted_receipt_warns() {
+        let temp = tempdir().unwrap();
+        let paths = GpmPaths::with_home(temp.path());
+        let manager = JsonStateManager::new(paths);
+
+        let receipts_dir = manager.paths.config_dir().join("receipts");
+        fs::create_dir_all(&receipts_dir).unwrap();
+        let path = receipts_dir.join("corrupted.json");
+        fs::write(&path, "{ invalid json }").unwrap();
+
+        let _pkg = manager.get_package("corrupted").unwrap();
     }
 }

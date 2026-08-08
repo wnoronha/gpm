@@ -192,4 +192,145 @@ mod tests {
         let extractor = ArchiveExtractor::new();
         assert!(!extractor.is_executable(&path).unwrap());
     }
+
+    #[test]
+    fn test_extract_tar_gz() {
+        let temp = tempdir().unwrap();
+        let archive_path = temp.path().join("test.tar.gz");
+
+        let tar_gz = fs::File::create(&archive_path).unwrap();
+        let enc = flate2::write::GzEncoder::new(tar_gz, flate2::Compression::default());
+        let mut tar = tar::Builder::new(enc);
+
+        let mut header = tar::Header::new_gnu();
+        header.set_size(11);
+        header.set_cksum();
+        tar.append_data(&mut header, "nested/file.txt", &b"hello world"[..])
+            .unwrap();
+        tar.into_inner().unwrap().finish().unwrap();
+
+        let dest = temp.path().join("dest");
+        fs::create_dir(&dest).unwrap();
+
+        let extractor = ArchiveExtractor::new();
+        extractor.extract(&archive_path, &dest).unwrap();
+
+        let extracted_file = dest.join("nested").join("file.txt");
+        assert!(extracted_file.exists());
+        assert_eq!(fs::read_to_string(&extracted_file).unwrap(), "hello world");
+    }
+
+    #[test]
+    fn test_extract_zip() {
+        let temp = tempdir().unwrap();
+        let archive_path = temp.path().join("test.zip");
+
+        let file = fs::File::create(&archive_path).unwrap();
+        let mut zip = zip::ZipWriter::new(file);
+
+        #[allow(unused_mut)]
+        let mut options = zip::write::SimpleFileOptions::default();
+        #[cfg(unix)]
+        {
+            options = options.unix_permissions(0o755);
+        }
+        zip.start_file("nested/file.txt", options).unwrap();
+        zip.write_all(b"hello world").unwrap();
+        zip.finish().unwrap();
+
+        let dest = temp.path().join("dest");
+        fs::create_dir(&dest).unwrap();
+
+        let extractor = ArchiveExtractor::new();
+        extractor.extract(&archive_path, &dest).unwrap();
+
+        let extracted_file = dest.join("nested").join("file.txt");
+        assert!(extracted_file.exists());
+        assert_eq!(fs::read_to_string(&extracted_file).unwrap(), "hello world");
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let perms = fs::metadata(&extracted_file).unwrap().permissions();
+            assert_eq!(perms.mode() & 0o777, 0o755);
+        }
+    }
+
+    #[test]
+    fn test_extract_tar_zst() {
+        let temp = tempdir().unwrap();
+        let archive_path = temp.path().join("test.tar.zst");
+
+        let tar_zst = fs::File::create(&archive_path).unwrap();
+        let enc = zstd::stream::write::Encoder::new(tar_zst, 0)
+            .unwrap()
+            .auto_finish();
+        let mut tar = tar::Builder::new(enc);
+
+        let mut header = tar::Header::new_gnu();
+        header.set_size(11);
+        header.set_cksum();
+        tar.append_data(&mut header, "file.txt", &b"hello world"[..])
+            .unwrap();
+        drop(tar);
+
+        let dest = temp.path().join("dest");
+        fs::create_dir(&dest).unwrap();
+
+        let extractor = ArchiveExtractor::new();
+        extractor.extract(&archive_path, &dest).unwrap();
+
+        let extracted_file = dest.join("file.txt");
+        assert!(extracted_file.exists());
+        assert_eq!(fs::read_to_string(&extracted_file).unwrap(), "hello world");
+    }
+
+    #[test]
+    fn test_extract_unsupported() {
+        let temp = tempdir().unwrap();
+        let archive_path = temp.path().join("test.rar");
+        fs::File::create(&archive_path).unwrap();
+
+        let dest = temp.path().join("dest");
+        fs::create_dir(&dest).unwrap();
+
+        let extractor = ArchiveExtractor::new();
+        let res = extractor.extract(&archive_path, &dest);
+        assert!(res.is_err());
+        assert!(
+            res.unwrap_err()
+                .to_string()
+                .contains("Unsupported archive format")
+        );
+    }
+
+    #[test]
+    fn test_find_binaries_mixed() {
+        let temp = tempdir().unwrap();
+
+        let bin1 = temp.path().join("bin1");
+        let mut f1 = fs::File::create(&bin1).unwrap();
+        f1.write_all(b"\x7fELFbin1").unwrap();
+
+        let txt1 = temp.path().join("txt1.txt");
+        let mut f2 = fs::File::create(&txt1).unwrap();
+        f2.write_all(b"not a binary").unwrap();
+
+        let sub = temp.path().join("sub");
+        fs::create_dir(&sub).unwrap();
+
+        let bin2 = sub.join("bin2");
+        let mut f3 = fs::File::create(&bin2).unwrap();
+        f3.write_all(b"\x7fELFbin2").unwrap();
+
+        let extractor = ArchiveExtractor::new();
+        let mut binaries = extractor.find_binaries(temp.path()).unwrap();
+        binaries.sort();
+
+        let mut expected = vec![bin1, bin2];
+        expected.sort();
+
+        assert_eq!(binaries.len(), 2);
+        assert_eq!(binaries, expected);
+    }
 }

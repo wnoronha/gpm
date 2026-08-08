@@ -17,6 +17,7 @@ mod tests {
         #[async_trait::async_trait]
         impl gpm::network::HttpClient for HttpClient {
             async fn fetch_json(&self, url: &str) -> gpm::errors::Result<serde_json::Value>;
+            async fn fetch_json_with_link(&self, url: &str) -> gpm::errors::Result<(serde_json::Value, Option<String>)>;
             async fn download_file(&self, url: &str, dest: &std::path::Path) -> gpm::errors::Result<()>;
         }
     }
@@ -71,7 +72,7 @@ mod tests {
         });
 
         let extractor = ArchiveExtractor::new();
-        let installer = GpmInstaller::new(&http, &extractor, paths.clone());
+        let installer = GpmInstaller::new(std::sync::Arc::new(http), std::sync::Arc::new(extractor), paths.clone());
         let state = JsonStateManager::new(paths.clone());
 
         let repo = "owner/testpkg";

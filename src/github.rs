@@ -31,16 +31,27 @@ pub trait ReleaseFetcher: Send + Sync {
     async fn get_release_by_tag(&self, repo: &str, tag: &str) -> Result<Release>;
 }
 
-pub struct GithubClient<'a> {
-    http: &'a dyn HttpClient,
+pub struct GithubClient {
+    http: std::sync::Arc<dyn HttpClient>,
+    api_base: String,
 }
 
-impl<'a> GithubClient<'a> {
-    pub fn new(http: &'a dyn HttpClient) -> Self {
-        Self { http }
+impl GithubClient {
+    pub fn new(http: std::sync::Arc<dyn HttpClient>) -> Self {
+        Self {
+            http,
+            api_base: std::env::var("GITHUB_API_URL")
+                .unwrap_or_else(|_| "https://api.github.com".to_string()),
+        }
     }
 
     pub fn parse_age(age_str: &str) -> Result<Duration> {
+        if age_str.len() < 2 {
+            return Err(GpmError::Unknown(format!(
+                "Invalid age format: '{}'. Expected format: <value><unit> e.g. 7d, 24h, 1m",
+                age_str
+            )));
+        }
         let age_str = age_str.to_lowercase();
         let value: i64 = age_str[..age_str.len() - 1]
             .parse()
@@ -71,7 +82,7 @@ impl<'a> GithubClient<'a> {
                         return Ok(Some(release.clone()));
                     }
                 }
-                return Ok(Some(releases[0].clone()));
+                return Ok(None);
             }
         };
 
@@ -115,6 +126,10 @@ impl<'a> GithubClient<'a> {
                 ".deb",
                 ".rpm",
                 ".msi",
+                ".apk",
+                ".pkg",
+                ".flatpak",
+                ".snap",
             ]
             .iter()
             .any(|ext| name.contains(ext))
@@ -236,20 +251,30 @@ fn get_arch_aliases(arch: &str) -> Vec<String> {
 }
 
 #[async_trait]
-impl<'a> ReleaseFetcher for GithubClient<'a> {
+impl ReleaseFetcher for GithubClient {
     async fn get_releases(&self, repo: &str) -> Result<Vec<Release>> {
-        let url = format!("https://api.github.com/repos/{}/releases", repo);
-        let value = self.http.fetch_json(&url).await?;
-        let releases: Vec<Release> =
-            serde_json::from_value(value).map_err(GpmError::Serialization)?;
-        Ok(releases)
+        let mut all_releases = Vec::new();
+        let mut url = format!("{}/repos/{}/releases?per_page=100", self.api_base, repo);
+
+        loop {
+            let (value, next_link) = self.http.fetch_json_with_link(&url).await?;
+            let mut releases: Vec<Release> =
+                serde_json::from_value(value).map_err(GpmError::Serialization)?;
+
+            all_releases.append(&mut releases);
+
+            if let Some(next_url) = next_link {
+                url = next_url;
+            } else {
+                break;
+            }
+        }
+
+        Ok(all_releases)
     }
 
     async fn get_release_by_tag(&self, repo: &str, tag: &str) -> Result<Release> {
-        let url = format!(
-            "https://api.github.com/repos/{}/releases/tags/{}",
-            repo, tag
-        );
+        let url = format!("{}/repos/{}/releases/tags/{}", self.api_base, repo, tag);
         let value = self.http.fetch_json(&url).await?;
         let release: Release = serde_json::from_value(value).map_err(GpmError::Serialization)?;
         Ok(release)
@@ -265,6 +290,13 @@ mod tests {
         assert_eq!(GithubClient::parse_age("7d").unwrap(), Duration::days(7));
         assert_eq!(GithubClient::parse_age("24h").unwrap(), Duration::hours(24));
         assert_eq!(GithubClient::parse_age("1m").unwrap(), Duration::days(30));
+    }
+
+    #[test]
+    fn test_parse_age_invalid() {
+        assert!(GithubClient::parse_age("").is_err());
+        assert!(GithubClient::parse_age("d").is_err());
+        assert!(GithubClient::parse_age("h").is_err());
     }
 
     #[test]
@@ -333,5 +365,130 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(result.tag_name, "v1.9");
+    }
+
+    #[test]
+    fn test_get_valid_release_only_prereleases_none() {
+        let releases = vec![
+            Release {
+                tag_name: "v2.0-beta".to_string(),
+                published_at: Utc::now(),
+                prerelease: true,
+                draft: false,
+                assets: vec![],
+            },
+            Release {
+                tag_name: "v2.0-draft".to_string(),
+                published_at: Utc::now(),
+                prerelease: false,
+                draft: true,
+                assets: vec![],
+            },
+        ];
+
+        let result = GithubClient::get_valid_release(releases.clone(), None).unwrap();
+        assert!(result.is_none());
+
+        let result = GithubClient::get_valid_release(releases, Some("0d")).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_select_asset_filters_apk() {
+        let assets = vec![
+            Asset {
+                name: "rg-linux-x86_64.apk".to_string(),
+                browser_download_url: "".to_string(),
+                size: 0,
+            },
+            Asset {
+                name: "rg-linux-x86_64.tar.gz".to_string(),
+                browser_download_url: "".to_string(),
+                size: 0,
+            },
+        ];
+        let (selected, _) = GithubClient::select_asset(&assets, "linux", "x86_64", None);
+        let selected = selected.unwrap();
+        assert_eq!(selected.name, "rg-linux-x86_64.tar.gz");
+    }
+
+    #[test]
+    fn test_select_asset_filters_pkg() {
+        let assets = vec![
+            Asset {
+                name: "rg-macos-x86_64.pkg".to_string(),
+                browser_download_url: "".to_string(),
+                size: 0,
+            },
+            Asset {
+                name: "rg-macos-x86_64.tar.gz".to_string(),
+                browser_download_url: "".to_string(),
+                size: 0,
+            },
+        ];
+        let (selected, _) = GithubClient::select_asset(&assets, "macos", "x86_64", None);
+        let selected = selected.unwrap();
+        assert_eq!(selected.name, "rg-macos-x86_64.tar.gz");
+    }
+    #[test]
+    fn test_select_asset_no_arch_match() {
+        let assets = vec![
+            Asset {
+                name: "app-linux-x86_64.tar.gz".to_string(),
+                browser_download_url: "".to_string(),
+                size: 0,
+            },
+            Asset {
+                name: "app-windows-x86_64.zip".to_string(),
+                browser_download_url: "".to_string(),
+                size: 0,
+            },
+        ];
+        // Request arm64, no arm64 assets present. Should still pick the best matching platform (linux) despite arch mismatch
+        let (selected, _) = GithubClient::select_asset(&assets, "linux", "arm64", None);
+        let selected = selected.unwrap();
+        assert_eq!(selected.name, "app-linux-x86_64.tar.gz");
+    }
+
+    #[test]
+    fn test_select_asset_checksum_detection_sha256() {
+        let assets = vec![
+            Asset {
+                name: "app-linux-x86_64.tar.gz".to_string(),
+                browser_download_url: "".to_string(),
+                size: 0,
+            },
+            Asset {
+                name: "app-linux-x86_64.tar.gz.sha256".to_string(),
+                browser_download_url: "".to_string(),
+                size: 0,
+            },
+        ];
+        let (selected, checksum) = GithubClient::select_asset(&assets, "linux", "x86_64", None);
+        let selected = selected.unwrap();
+        let checksum = checksum.unwrap();
+        assert_eq!(selected.name, "app-linux-x86_64.tar.gz");
+        assert_eq!(checksum.name, "app-linux-x86_64.tar.gz.sha256");
+    }
+
+    #[test]
+    fn test_select_asset_checksum_detection_txt() {
+        let assets = vec![
+            Asset {
+                name: "app-linux-x86_64.tar.gz".to_string(),
+                browser_download_url: "".to_string(),
+                size: 0,
+            },
+            Asset {
+                name: "checksums.txt".to_string(),
+                browser_download_url: "".to_string(),
+                size: 0,
+            },
+        ];
+        let (selected, checksum) = GithubClient::select_asset(&assets, "linux", "x86_64", None);
+        let selected = selected.unwrap();
+        let checksum = checksum.unwrap();
+        assert_eq!(selected.name, "app-linux-x86_64.tar.gz");
+        assert_eq!(checksum.name, "checksums.txt");
     }
 }

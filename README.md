@@ -26,6 +26,16 @@ Download the latest binary for your platform from [Releases](https://github.com/
 xattr -d com.apple.quarantine gpm
 ```
 
+### PATH Setup
+gpm symlinks installed binaries to a standard executable directory. You must ensure this directory is in your system's `PATH`.
+- **Linux**: Usually `~/.local/bin`
+- **macOS/Windows**: Defaults to `~/.local/bin`
+
+Add this to your `~/.bashrc` or `~/.zshrc`:
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+```
+
 ### Quick Start
 ```bash
 # Install a tool
@@ -69,6 +79,13 @@ gpm uninstall ripgrep --pkg-version 14.1.0
 | `upgrade [pkg]` | Upgrade packages | `-y`: Auto-confirm <br> `-p`: Filter by asset name |
 | `self-update` | Update `gpm` itself | |
 | `prune [pkg]` | Remove inactive versions | `-y`: Auto-confirm |
+
+## Environment Variables
+
+| Variable | Description | Default |
+| :--- | :--- | :--- |
+| `GPM_HOME` | Base directory for gpm cache and config. | `~` |
+| `GPM_BIN_DIR` | Directory where active binaries are symlinked. | `dirs::executable_dir()` or `~/.local/bin` |
 
 ## Development
 

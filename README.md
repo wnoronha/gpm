@@ -1,42 +1,51 @@
-# GPM - GitHub Package Manager (Rust)
+# GPM (GitHub Package Manager)
 
-A lightweight, high-performance CLI tool to install binaries directly from GitHub Releases. Built for developers who want quick tool management without the overhead of heavy package managers.
+GPM is a fast CLI tool. Use GPM to install binaries directly from GitHub releases. GPM is for developers who want to manage tools quickly without heavy package managers.
 
 ## Features
-- **Single Static Binary**: No runtime dependencies.
-- **Async Execution**: Powered by Tokio for fast downloads and processing.
-- **Version Management**: Uses `~/.cache/gpm` for persistent storage, allowing multiple versions of the same tool to coexist.
-- **Symlink Support**: Binaries are symlinked to `~/.local/bin`, making version switching instant.
-- **Smart Asset Selection**: Automatically identifies the correct asset for your OS and architecture. [See details](docs/ASSET_SELECTION.md).
-- **Robust Binary Discovery**: Uses Magic Byte detection (ELF, Mach-O, PE) to identify executables, even if they lack extensions or executable bits in the archive.
 
-## Getting Started
+- **Single static binary**: GPM has no runtime dependencies.
+- **Asynchronous operation**: GPM uses Tokio for fast downloads and file operations.
+- **Version management**: GPM uses `~/.cache/gpm` for storage. You can keep multiple versions of the same tool.
+- **Symlink support**: GPM creates symlinks for binaries in `~/.local/bin`. This makes version switching immediate.
+- **Smart asset selection**: GPM automatically identifies the correct asset for your operating system and architecture. [Read more](docs/ASSET_SELECTION.md).
+- **Reliable binary discovery**: GPM uses Magic Byte detection (ELF, Mach-O, PE) to find executables. GPM finds executables even if they do not have file extensions or executable permissions in the archive.
 
-### Installation
-#### From Source
+## How to start
+
+### How to install
+
+#### Compile from source code
+
 ```bash
 cargo install --path .
 ```
 
-#### From Binary
-Download the latest binary for your platform from [Releases](https://github.com/wnoronha/gpm/releases).
+#### Install from a binary
 
-**macOS Note:** If you download the binary on macOS, you may need to clear the quarantine attribute for it to run:
+Download the latest binary for your operating system from the [Releases page](https://github.com/wnoronha/gpm/releases).
+
+**Note for macOS:** If you download the binary on macOS, you must remove the quarantine attribute before you can run the application:
+
 ```bash
 xattr -d com.apple.quarantine gpm
 ```
 
-### PATH Setup
-gpm symlinks installed binaries to a standard executable directory. You must ensure this directory is in your system's `PATH`.
-- **Linux**: Usually `~/.local/bin`
-- **macOS/Windows**: Defaults to `~/.local/bin`
+### How to configure your PATH
 
-Add this to your `~/.bashrc` or `~/.zshrc`:
+GPM creates symlinks for installed binaries in a standard executable directory. You must add this directory to your system `PATH`.
+
+- **Linux**: The default directory is `~/.local/bin`.
+- **macOS and Windows**: The default directory is `~/.local/bin`.
+
+Add this command to your `~/.bashrc` or `~/.zshrc` file:
+
 ```bash
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
-### Quick Start
+### Quick start
+
 ```bash
 # Install a tool
 gpm install BurntSushi/ripgrep
@@ -44,64 +53,67 @@ gpm install BurntSushi/ripgrep
 # Install a specific version
 gpm install BurntSushi/ripgrep --version 14.1.0
 
-# List what's installed
+# Show installed packages
 gpm list
 
-# Link a specific version
+# Change the active version
 gpm link ripgrep 14.1.0
 
-# Unlink a tool (removes from bin, keeps in cache)
+# Remove the symlink (removes from bin, keeps in cache)
 gpm unlink ripgrep
 
-# Check for updates
+# Check for new versions
 gpm outdated
 
 # Upgrade all packages
 gpm upgrade -y
 
-# Prune old versions to free up space
+# Remove inactive versions to make free space
 gpm prune -y
 
-# Uninstall a specific version
+# Remove a specific version
 gpm uninstall ripgrep --pkg-version 14.1.0
 ```
 
-## Commands Reference
+## Command reference
 
 | Command | Description | Options |
 | :--- | :--- | :--- |
-| `install <repo>` | Install binary from `owner/repo` | `--version`: Specific version tag <br> `--min-age`: Filter by release age (e.g., `7d`) <br> `--pattern` (`-p`): Filter by asset name |
-| `uninstall <pkg>` | Remove package versions | `--pkg-version`: Specific version to remove |
-| `link <pkg> <ver>`| Switch active version | |
-| `unlink <pkg>` | Remove symlink | |
-| `list` | List installed packages | |
-| `outdated` | Check for new versions | `--min-age`: Filter check by release age |
-| `upgrade [pkg]` | Upgrade packages | `-y`: Auto-confirm <br> `-p`: Filter by asset name |
-| `self-update` | Update `gpm` itself | |
-| `prune [pkg]` | Remove inactive versions | `-y`: Auto-confirm |
+| `install <repo>` | Install a binary from `owner/repo`. | `--version`: Select a specific version tag. <br> `--min-age`: Filter by release age (for example, `7d`). <br> `--pattern` (`-p`): Filter by asset name. |
+| `uninstall <pkg>` | Remove package versions. | `--pkg-version`: Remove a specific version. |
+| `link <pkg> <ver>`| Change the active version. | |
+| `unlink <pkg>` | Remove the symlink. | |
+| `list` | Show installed packages. | |
+| `outdated` | Check for new versions. | `--min-age`: Filter the check by release age. |
+| `upgrade [pkg]` | Upgrade packages. | `-y`: Confirm automatically. <br> `-p`: Filter by asset name. |
+| `self-update` | Update `gpm` to the latest version. | |
+| `prune [pkg]` | Remove inactive versions. | `-y`: Confirm automatically. |
 
-## Environment Variables
+## Environment variables
 
 | Variable | Description | Default |
 | :--- | :--- | :--- |
-| `GPM_HOME` | Base directory for gpm cache and config. | `~` |
-| `GPM_BIN_DIR` | Directory where active binaries are symlinked. | `dirs::executable_dir()` or `~/.local/bin` |
+| `GPM_HOME` | The base directory for the GPM cache and configuration. | `~` |
+| `GPM_BIN_DIR` | The directory where GPM creates symlinks for active binaries. | `dirs::executable_dir()` or `~/.local/bin` |
 
-## Development
+## How to develop
 
-### Prerequisites
-- [Rust](https://rustup.rs/) (edition 2024)
+### Requirements
 
-### Setup & Build
+- Install [Rust](https://rustup.rs/) (edition 2024).
+
+### How to build and test
+
 ```bash
 cargo build
 cargo test
 cargo clippy
 ```
 
-## Project Structure
-- `src/`: Rust source code.
-- `tests/`: Integration tests.
-- `Cargo.toml`: Project metadata and dependencies.
-- `CHANGELOG.md`: Record of all notable changes.
-- `AGENTS.md`: Specialized instructions for AI-led development.
+## Project structure
+
+- `src/`: The Rust source code.
+- `tests/`: The integration tests.
+- `Cargo.toml`: The project metadata and dependencies.
+- `CHANGELOG.md`: A record of all important changes.
+- `AGENTS.md`: Special instructions for AI development.

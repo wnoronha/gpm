@@ -16,11 +16,11 @@ jobs:
       matrix:
         include:
           - target: x86_64-unknown-linux-gnu
-            os: ubuntu-latest
+            os: ubuntu-26.04
             suffix: ""
             archive: tar.gz
           - target: aarch64-unknown-linux-gnu
-            os: ubuntu-latest
+            os: ubuntu-26.04
             suffix: ""
             archive: tar.gz
           - target: x86_64-apple-darwin
@@ -39,7 +39,7 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4.4.0
 
       - name: Rust Toolchain
         uses: dtolnay/rust-toolchain@stable

@@ -1,56 +1,66 @@
-# Asset Selection Logic
+# Asset selection logic
 
-GPM uses a heuristic scoring system to automatically select the most appropriate asset from a GitHub Release for your current platform and architecture.
+GPM uses a scoring system. This system automatically selects the best asset from a GitHub release for your operating system and architecture.
 
-## Selection Process
+## Selection process
 
-The selection follows a 5-step process implemented in `src/github.rs`.
+The selection uses a 5-step process in `src/github.rs`.
 
-### 1. Filtering & Disqualification
-Assets are immediately disqualified if they meet any of the following criteria:
-- **Pattern Mismatch**: Does not contain the user-provided `--pattern` (if specified).
-- **Metadata Files**: Ends with `.sha256`, `.asc`, `.sig`, `.md5`, `.txt`, or `.sha256sum`.
-- **System Package Formats**: Ends with `.deb`, `.rpm`, or `.msi` (GPM prefers raw binaries or portable archives).
+### 1. Filter and remove
 
-### 2. Platform Detection
-GPM identifies your operating system and applies strict matching rules:
+GPM removes assets if they match these conditions:
 
-| Marker Group | Keywords |
+- **Pattern mismatch**: The asset name does not contain the `--pattern` string.
+- **Metadata files**: The file name ends with `.sha256`, `.asc`, `.sig`, `.md5`, `.txt`, or `.sha256sum`.
+- **System package formats**: The file name ends with `.deb`, `.rpm`, or `.msi`. GPM prefers raw binaries or portable archives.
+
+### 2. Find the operating system
+
+GPM identifies your operating system and applies these matching rules:
+
+| Marker group | Keywords |
 | :--- | :--- |
 | **Linux** | `linux`, `musl`, `tux`, `unknown-linux` |
 | **macOS** | `darwin`, `macos`, `apple-darwin`, `osx` |
 | **Windows**| `windows`, `pc-windows`, `win32`, `win64`, `.exe` |
 
-**Strict Matching Rules:**
-- If you are on **Linux**, any asset with a **Windows** or **macOS** marker is disqualified.
-- An asset matching your OS exactly receives **+20 points**.
-- A "naked" binary (no OS markers) receives **+5 points** as a fallback.
+**Strict matching rules:**
 
-### 3. Architecture Matching
-GPM maps your machine's architecture to common naming conventions:
+- If you use **Linux**, GPM removes any asset with a **Windows** or **macOS** marker.
+- GPM adds **20 points** to an asset that matches your operating system.
+- GPM adds **5 points** to an asset that has no operating system markers.
+
+### 3. Find the architecture
+
+GPM compares your computer architecture to common names:
 
 - **x86_64**: Matches `x86_64`, `amd64`, `x64`.
 - **arm64**: Matches `arm64`, `aarch64`, `armv8`.
 - **i386**: Matches `i386`, `i686`, `x86`.
 
-**Scoring:**
-- Canonical or Alias Match: **+10 points**.
-- No Match: **-5 points**.
+**Scores:**
 
-### 4. Format Preference
-On Unix-like systems (Linux/macOS), GPM applies a slight preference for standard archive formats:
+- Match: **+10 points**.
+- No match: **-5 points**.
+
+### 4. Format preference
+
+On Linux and macOS, GPM prefers standard archive formats:
+
 - `.tar.gz` or `.tgz`: **+2 points**.
 - `.zip`: **+1 point**.
 
-### 5. Final Ranking
-The asset with the highest cumulative score is selected for download. In the event of a tie, the first asset processed wins.
+### 5. Final scores
 
-## Example Scenario
-**Target System:** Linux (x86_64)
+GPM selects the asset with the highest score. If two assets have the same score, GPM selects the first asset.
 
-| Asset Name | Status | Points | Reason |
+## Example
+
+**Target system:** Linux (x86_64)
+
+| Asset name | Status | Points | Reason |
 | :--- | :--- | :--- | :--- |
-| `tool-x86_64-pc-windows-gnu.zip` | Disqualified | - | Contains `pc-windows` marker |
-| `tool-i386-unknown-linux-gnu.tar.gz`| Eligible | 17 | Linux (+20), No Arch Match (-5), .tar.gz (+2) |
-| `tool-x86_64-unknown-linux-musl.tar.gz`| **Winner** | **32** | Linux (+20), Arch Match (+10), .tar.gz (+2) |
-| `tool-universal.sh` | Eligible | 5 | Naked binary fallback (+5) |
+| `tool-x86_64-pc-windows-gnu.zip` | Removed | - | The name has a `pc-windows` marker. |
+| `tool-i386-unknown-linux-gnu.tar.gz`| Kept | 17 | Linux (+20), no architecture match (-5), .tar.gz (+2). |
+| `tool-x86_64-unknown-linux-musl.tar.gz`| **Winner** | **32** | Linux (+20), architecture match (+10), .tar.gz (+2). |
+| `tool-universal.sh` | Kept | 5 | No markers (+5). |

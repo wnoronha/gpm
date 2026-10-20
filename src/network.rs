@@ -212,9 +212,7 @@ mod tests {
 
         Mock::given(method("GET"))
             .and(path("/api"))
-            .respond_with(
-                ResponseTemplate::new(429).insert_header("Retry-After", "5"),
-            )
+            .respond_with(ResponseTemplate::new(429).insert_header("Retry-After", "5"))
             .up_to_n_times(1)
             .expect(1)
             .mount(&mock_server)
@@ -232,7 +230,7 @@ mod tests {
         let client = ReqwestClient::new().unwrap();
         let url = format!("{}/api", mock_server.uri());
         let res = client.fetch_json(&url).await.unwrap();
-        
+
         let elapsed = start.elapsed();
         assert_eq!(res["ok"], true);
         assert!(elapsed >= Duration::from_secs(5));
@@ -253,7 +251,7 @@ mod tests {
         let client = ReqwestClient::new().unwrap();
         let url = format!("{}/api", mock_server.uri());
         let res = client.fetch_json(&url).await;
-        
+
         assert!(res.is_err());
         assert!(res.unwrap_err().to_string().contains("HTTP Error 500"));
     }
@@ -273,7 +271,7 @@ mod tests {
         let client = ReqwestClient::new().unwrap();
         let url = format!("{}/api", mock_server.uri());
         let res = client.fetch_json(&url).await;
-        
+
         assert!(res.is_err());
         assert!(res.unwrap_err().to_string().contains("HTTP Error 404"));
     }

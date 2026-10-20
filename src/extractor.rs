@@ -247,7 +247,7 @@ mod tests {
         let extracted_file = dest.join("nested").join("file.txt");
         assert!(extracted_file.exists());
         assert_eq!(fs::read_to_string(&extracted_file).unwrap(), "hello world");
-        
+
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -297,10 +297,11 @@ mod tests {
         let extractor = ArchiveExtractor::new();
         let res = extractor.extract(&archive_path, &dest);
         assert!(res.is_err());
-        assert!(res
-            .unwrap_err()
-            .to_string()
-            .contains("Unsupported archive format"));
+        assert!(
+            res.unwrap_err()
+                .to_string()
+                .contains("Unsupported archive format")
+        );
     }
 
     #[test]
@@ -328,7 +329,7 @@ mod tests {
 
         let mut expected = vec![bin1, bin2];
         expected.sort();
-        
+
         assert_eq!(binaries.len(), 2);
         assert_eq!(binaries, expected);
     }

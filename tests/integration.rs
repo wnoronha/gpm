@@ -72,7 +72,11 @@ mod tests {
         });
 
         let extractor = ArchiveExtractor::new();
-        let installer = GpmInstaller::new(std::sync::Arc::new(http), std::sync::Arc::new(extractor), paths.clone());
+        let installer = GpmInstaller::new(
+            std::sync::Arc::new(http),
+            std::sync::Arc::new(extractor),
+            paths.clone(),
+        );
         let state = JsonStateManager::new(paths.clone());
 
         let repo = "owner/testpkg";

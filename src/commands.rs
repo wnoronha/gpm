@@ -300,7 +300,7 @@ pub async fn upgrade(
                             .unwrap_or(None)
                             .unwrap_or(false)
                     };
-                    
+
                     if !confirmed {
                         continue;
                     }
@@ -407,7 +407,7 @@ pub fn prune(installer: &dyn Installer, state: &dyn StateManager, args: &PruneAr
                     .unwrap_or(None)
                     .unwrap_or(false)
             };
-            
+
             if !confirmed {
                 continue;
             }
@@ -682,7 +682,7 @@ mod tests {
             .await
             .unwrap();
     }
-    use crate::cli::{UpgradeArgs, PruneArgs};
+    use crate::cli::{PruneArgs, UpgradeArgs};
     use crate::installer::MockInstaller;
     use mockall::predicate;
 
@@ -746,7 +746,7 @@ mod tests {
         github
             .expect_get_releases()
             .returning(move |_| Ok(vec![release_clone1.clone()]));
-            
+
         let release_clone2 = release.clone(); // Added mock expectation for get_release_by_tag
         github
             .expect_get_release_by_tag()
@@ -771,12 +771,12 @@ mod tests {
             .unwrap();
     }
 
-
-
     #[tokio::test]
     async fn test_upgrade_out_of_date_with_yes_declined() {
-        unsafe { std::env::set_var("GPM_TEST_DECLINE", "1"); }
-        
+        unsafe {
+            std::env::set_var("GPM_TEST_DECLINE", "1");
+        }
+
         let (state, _tmp) = setup_state();
         state
             .add_package("ripgrep", "BurntSushi/ripgrep", "14.0.0", &[])
@@ -808,8 +808,10 @@ mod tests {
         super::upgrade(&installer, &github, &state, &args)
             .await
             .unwrap();
-            
-        unsafe { std::env::remove_var("GPM_TEST_DECLINE"); }
+
+        unsafe {
+            std::env::remove_var("GPM_TEST_DECLINE");
+        }
     }
     #[tokio::test]
     async fn test_upgrade_single_package_targeting() {
@@ -817,9 +819,7 @@ mod tests {
         state
             .add_package("ripgrep", "BurntSushi/ripgrep", "14.0.0", &[])
             .unwrap();
-        state
-            .add_package("fd", "sharkdp/fd", "8.0.0", &[])
-            .unwrap();
+        state.add_package("fd", "sharkdp/fd", "8.0.0", &[]).unwrap();
 
         let release = Release {
             tag_name: "15.0.0".to_string(),
@@ -841,7 +841,7 @@ mod tests {
             .with(predicate::eq("BurntSushi/ripgrep"))
             .times(1)
             .returning(move |_| Ok(vec![release_clone1.clone()]));
-            
+
         let release_clone2 = release.clone();
         github
             .expect_get_release_by_tag()
@@ -881,7 +881,11 @@ mod tests {
         let mut installer = MockInstaller::new();
         installer
             .expect_uninstall_version()
-            .with(predicate::eq("ripgrep"), predicate::eq("14.0.0"), predicate::always())
+            .with(
+                predicate::eq("ripgrep"),
+                predicate::eq("14.0.0"),
+                predicate::always(),
+            )
             .times(1)
             .returning(|_, _, _| Ok(()));
 
@@ -891,7 +895,7 @@ mod tests {
         };
 
         super::prune(&installer, &state, &args).unwrap();
-        
+
         // Ensure 14.0.0 is gone
         let pkg = state.get_package("ripgrep").unwrap().unwrap();
         assert!(!pkg.versions.contains_key("14.0.0"));
@@ -928,18 +932,18 @@ mod tests {
             .unwrap();
         state.set_active_version("ripgrep", Some("15.0.0")).unwrap();
 
-        state
-            .add_package("fd", "sharkdp/fd", "8.0.0", &[])
-            .unwrap();
-        state
-            .add_package("fd", "sharkdp/fd", "9.0.0", &[])
-            .unwrap();
+        state.add_package("fd", "sharkdp/fd", "8.0.0", &[]).unwrap();
+        state.add_package("fd", "sharkdp/fd", "9.0.0", &[]).unwrap();
         state.set_active_version("fd", Some("9.0.0")).unwrap();
 
         let mut installer = MockInstaller::new();
         installer
             .expect_uninstall_version()
-            .with(predicate::eq("ripgrep"), predicate::eq("14.0.0"), predicate::always())
+            .with(
+                predicate::eq("ripgrep"),
+                predicate::eq("14.0.0"),
+                predicate::always(),
+            )
             .times(1)
             .returning(|_, _, _| Ok(()));
 
@@ -949,7 +953,7 @@ mod tests {
         };
 
         super::prune(&installer, &state, &args).unwrap();
-        
+
         let fd = state.get_package("fd").unwrap().unwrap();
         assert!(fd.versions.contains_key("8.0.0")); // Did not prune fd
     }

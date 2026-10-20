@@ -123,9 +123,33 @@ pub async fn install(
         .await?;
 
     let name = repo.split('/').next_back().unwrap();
-    state.add_package(name, repo, &release.tag_name, &installed_files)?;
-    installer.link(name, &release.tag_name, &installed_files)?;
+    let (target_file, link_name) = crate::installer::resolve_link_target(
+        name,
+        &installed_files,
+        args.bin.as_deref(),
+        args.link.as_deref(),
+    )?;
 
+    // Unlink the previous active version's recorded links, if any.
+    if let Some(pkg) = state.get_package(name)?
+        && let Some(active) = &pkg.active_version
+        && let Some(active_info) = pkg.versions.get(active)
+        && !active_info.bins.is_empty()
+    {
+        installer.unlink(name, &active_info.bins)?;
+    }
+
+    installer.link(&target_file, &link_name)?;
+
+    state.add_package(
+        name,
+        repo,
+        &release.tag_name,
+        &installed_files,
+        std::slice::from_ref(&link_name),
+        args.bin.as_deref(),
+        args.link.as_deref(),
+    )?;
     Ok(())
 }
 
@@ -144,7 +168,7 @@ pub fn uninstall(
         })?;
 
         if pkg.active_version.as_deref() == Some(v) {
-            installer.unlink(&args.name, &version_info.files)?;
+            installer.unlink(&args.name, &version_info.bins)?;
         }
 
         installer.uninstall_version(&args.name, v, &version_info.files)?;
@@ -152,7 +176,7 @@ pub fn uninstall(
     } else {
         if let Some(v) = &pkg.active_version {
             let version_info = pkg.versions.get(v).unwrap();
-            installer.unlink(&args.name, &version_info.files)?;
+            installer.unlink(&args.name, &version_info.bins)?;
         }
 
         for (v, info) in &pkg.versions {
@@ -176,13 +200,30 @@ pub fn link(installer: &dyn Installer, state: &dyn StateManager, args: &LinkArgs
         ))
     })?;
 
+    let eff_bin = args.bin.as_deref().or(pkg.bin.as_deref());
+    let eff_link = args.link.as_deref().or(pkg.link.as_deref());
+    let (target_file, link_name) =
+        crate::installer::resolve_link_target(&args.name, &version_info.files, eff_bin, eff_link)?;
+
     if let Some(active) = &pkg.active_version {
         let active_info = pkg.versions.get(active).unwrap();
-        installer.unlink(&args.name, &active_info.files)?;
+        if !active_info.bins.is_empty() {
+            installer.unlink(&args.name, &active_info.bins)?;
+        }
     }
 
-    installer.link(&args.name, &args.version, &version_info.files)?;
-    state.set_active_version(&args.name, Some(&args.version))?;
+    installer.link(&target_file, &link_name)?;
+    // Record resolved links + effective selectors, and activate the version.
+    // (add_package overwrites the version entry and sets it active.)
+    state.add_package(
+        &args.name,
+        &pkg.repo,
+        &args.version,
+        &version_info.files.clone(),
+        std::slice::from_ref(&link_name),
+        eff_bin,
+        eff_link,
+    )?;
 
     Ok(())
 }
@@ -201,7 +242,7 @@ pub fn unlink(
         .as_ref()
         .and_then(|v| pkg.versions.get(v))
     {
-        installer.unlink(&args.name, &active_info.files)?;
+        installer.unlink(&args.name, &active_info.bins)?;
         state.set_active_version(&args.name, None)?;
     }
 
@@ -311,6 +352,8 @@ pub async fn upgrade(
                     version: Some(latest.tag_name.clone()),
                     min_age: None, // min_age filtering is done by get_valid_release above
                     pattern: args.pattern.clone(),
+                    bin: pkg.bin.clone(),
+                    link: pkg.link.clone(),
                 };
                 install(installer, github, state, &install_args).await?;
             }
@@ -360,11 +403,15 @@ pub fn format_list(state: &dyn StateManager) -> Result<String> {
             .as_ref()
             .and_then(|v| pkg.versions.get(v))
             .map(|info| {
-                info.files
-                    .iter()
-                    .filter_map(|p| p.file_name().and_then(|s| s.to_str()))
-                    .collect::<Vec<_>>()
-                    .join(", ")
+                if info.bins.is_empty() {
+                    info.files
+                        .iter()
+                        .filter_map(|p| p.file_name().and_then(|s| s.to_str()))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                } else {
+                    info.bins.join(", ")
+                }
             })
             .unwrap_or_default();
 
@@ -449,13 +496,18 @@ pub async fn self_update() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use chrono::Utc;
     use tempfile::tempdir;
 
-    use crate::cli::OutdatedArgs;
+    use crate::cli::{InstallArgs, OutdatedArgs};
+    use crate::extractor::ArchiveExtractor;
     use crate::github::{Asset, MockReleaseFetcher, Release};
+    use crate::installer::GpmInstaller;
     use crate::manifest::JsonStateManager;
     use crate::manifest::StateManager;
+    use crate::network::MockHttpClient;
 
     use crate::paths::GpmPaths;
 
@@ -476,7 +528,15 @@ mod tests {
     fn test_format_list_single_package() {
         let (state, _tmp) = setup_state();
         state
-            .add_package("ripgrep", "BurntSushi/ripgrep", "14.1.0", &[])
+            .add_package(
+                "ripgrep",
+                "BurntSushi/ripgrep",
+                "14.1.0",
+                &[],
+                &[],
+                None,
+                None,
+            )
             .unwrap();
 
         let output = super::format_list(&state).unwrap();
@@ -495,10 +555,10 @@ mod tests {
     fn test_format_list_sorts_by_name() {
         let (state, _tmp) = setup_state();
         state
-            .add_package("zellij", "zellij/zellij", "v0.40.0", &[])
+            .add_package("zellij", "zellij/zellij", "v0.40.0", &[], &[], None, None)
             .unwrap();
         state
-            .add_package("beads", "jcwillox/beads", "v1.0.5", &[])
+            .add_package("beads", "jcwillox/beads", "v1.0.5", &[], &[], None, None)
             .unwrap();
 
         let output = super::format_list(&state).unwrap();
@@ -512,10 +572,26 @@ mod tests {
     fn test_format_list_active_marker() {
         let (state, _tmp) = setup_state();
         state
-            .add_package("ripgrep", "BurntSushi/ripgrep", "14.1.0", &[])
+            .add_package(
+                "ripgrep",
+                "BurntSushi/ripgrep",
+                "14.1.0",
+                &[],
+                &[],
+                None,
+                None,
+            )
             .unwrap();
         state
-            .add_package("ripgrep", "BurntSushi/ripgrep", "15.0.0", &[])
+            .add_package(
+                "ripgrep",
+                "BurntSushi/ripgrep",
+                "15.0.0",
+                &[],
+                &[],
+                None,
+                None,
+            )
             .unwrap();
 
         let output = super::format_list(&state).unwrap();
@@ -538,7 +614,15 @@ mod tests {
     async fn test_format_outdated_shows_outdated() {
         let (state, _tmp) = setup_state();
         state
-            .add_package("ripgrep", "BurntSushi/ripgrep", "14.1.0", &[])
+            .add_package(
+                "ripgrep",
+                "BurntSushi/ripgrep",
+                "14.1.0",
+                &[],
+                &[],
+                None,
+                None,
+            )
             .unwrap();
 
         let release = Release {
@@ -578,7 +662,15 @@ mod tests {
     async fn test_format_outdated_skips_up_to_date() {
         let (state, _tmp) = setup_state();
         state
-            .add_package("ripgrep", "BurntSushi/ripgrep", "15.0.0", &[])
+            .add_package(
+                "ripgrep",
+                "BurntSushi/ripgrep",
+                "15.0.0",
+                &[],
+                &[],
+                None,
+                None,
+            )
             .unwrap();
 
         let release = Release {
@@ -642,21 +734,14 @@ mod tests {
                 _cu: Option<&'a str>,
                 _cn: Option<&'a str>,
             ) -> crate::errors::Result<Vec<std::path::PathBuf>> {
-                Ok(vec![])
+                Ok(vec![std::path::PathBuf::from(
+                    "/cache/repo/v1.0.0/rg-linux.tar.gz",
+                )])
             }
-            fn link(
-                &self,
-                _name: &str,
-                _version: &str,
-                _files: &[std::path::PathBuf],
-            ) -> crate::errors::Result<()> {
+            fn link(&self, _src: &std::path::Path, _name: &str) -> crate::errors::Result<()> {
                 Ok(())
             }
-            fn unlink(
-                &self,
-                _name: &str,
-                _files: &[std::path::PathBuf],
-            ) -> crate::errors::Result<()> {
+            fn unlink(&self, _name: &str, _bins: &[String]) -> crate::errors::Result<()> {
                 Ok(())
             }
             fn uninstall_version(
@@ -676,6 +761,8 @@ mod tests {
             version: Some("v1.0.0".to_string()),
             min_age: None,
             pattern: None,
+            bin: None,
+            link: None,
         };
 
         super::install(&installer, &github, &state, &args)
@@ -690,7 +777,15 @@ mod tests {
     async fn test_upgrade_up_to_date_skip() {
         let (state, _tmp) = setup_state();
         state
-            .add_package("ripgrep", "BurntSushi/ripgrep", "15.0.0", &[])
+            .add_package(
+                "ripgrep",
+                "BurntSushi/ripgrep",
+                "15.0.0",
+                &[],
+                &[],
+                None,
+                None,
+            )
             .unwrap();
 
         let release = Release {
@@ -726,7 +821,15 @@ mod tests {
     async fn test_upgrade_out_of_date_with_yes() {
         let (state, _tmp) = setup_state();
         state
-            .add_package("ripgrep", "BurntSushi/ripgrep", "14.0.0", &[])
+            .add_package(
+                "ripgrep",
+                "BurntSushi/ripgrep",
+                "14.0.0",
+                &[],
+                &[],
+                None,
+                None,
+            )
             .unwrap();
 
         let release = Release {
@@ -756,8 +859,12 @@ mod tests {
         installer
             .expect_install_and_discover()
             .times(1)
-            .returning(|_, _, _, _, _, _| Ok(vec![]));
-        installer.expect_link().times(1).returning(|_, _, _| Ok(()));
+            .returning(|_, _, _, _, _, _| {
+                Ok(vec![std::path::PathBuf::from(
+                    "/cache/ripgrep/15.0.0/rg-linux-x86_64",
+                )])
+            });
+        installer.expect_link().times(1).returning(|_, _| Ok(()));
 
         let args = UpgradeArgs {
             package: None,
@@ -779,7 +886,15 @@ mod tests {
 
         let (state, _tmp) = setup_state();
         state
-            .add_package("ripgrep", "BurntSushi/ripgrep", "14.0.0", &[])
+            .add_package(
+                "ripgrep",
+                "BurntSushi/ripgrep",
+                "14.0.0",
+                &[],
+                &[],
+                None,
+                None,
+            )
             .unwrap();
 
         let release = Release {
@@ -817,9 +932,19 @@ mod tests {
     async fn test_upgrade_single_package_targeting() {
         let (state, _tmp) = setup_state();
         state
-            .add_package("ripgrep", "BurntSushi/ripgrep", "14.0.0", &[])
+            .add_package(
+                "ripgrep",
+                "BurntSushi/ripgrep",
+                "14.0.0",
+                &[],
+                &[],
+                None,
+                None,
+            )
             .unwrap();
-        state.add_package("fd", "sharkdp/fd", "8.0.0", &[]).unwrap();
+        state
+            .add_package("fd", "sharkdp/fd", "8.0.0", &[], &[], None, None)
+            .unwrap();
 
         let release = Release {
             tag_name: "15.0.0".to_string(),
@@ -852,8 +977,12 @@ mod tests {
         installer
             .expect_install_and_discover()
             .times(1)
-            .returning(|_, _, _, _, _, _| Ok(vec![]));
-        installer.expect_link().times(1).returning(|_, _, _| Ok(()));
+            .returning(|_, _, _, _, _, _| {
+                Ok(vec![std::path::PathBuf::from(
+                    "/cache/ripgrep/15.0.0/rg-linux-x86_64",
+                )])
+            });
+        installer.expect_link().times(1).returning(|_, _| Ok(()));
 
         let args = UpgradeArgs {
             package: Some("ripgrep".to_string()),
@@ -871,10 +1000,26 @@ mod tests {
     fn test_prune_inactive_versions_removed() {
         let (state, _tmp) = setup_state();
         state
-            .add_package("ripgrep", "BurntSushi/ripgrep", "14.0.0", &[])
+            .add_package(
+                "ripgrep",
+                "BurntSushi/ripgrep",
+                "14.0.0",
+                &[],
+                &[],
+                None,
+                None,
+            )
             .unwrap();
         state
-            .add_package("ripgrep", "BurntSushi/ripgrep", "15.0.0", &[])
+            .add_package(
+                "ripgrep",
+                "BurntSushi/ripgrep",
+                "15.0.0",
+                &[],
+                &[],
+                None,
+                None,
+            )
             .unwrap();
         state.set_active_version("ripgrep", Some("15.0.0")).unwrap();
 
@@ -906,7 +1051,15 @@ mod tests {
     fn test_prune_noop_when_only_active_version_exists() {
         let (state, _tmp) = setup_state();
         state
-            .add_package("ripgrep", "BurntSushi/ripgrep", "15.0.0", &[])
+            .add_package(
+                "ripgrep",
+                "BurntSushi/ripgrep",
+                "15.0.0",
+                &[],
+                &[],
+                None,
+                None,
+            )
             .unwrap();
         state.set_active_version("ripgrep", Some("15.0.0")).unwrap();
 
@@ -925,15 +1078,35 @@ mod tests {
     fn test_prune_single_package_targeting() {
         let (state, _tmp) = setup_state();
         state
-            .add_package("ripgrep", "BurntSushi/ripgrep", "14.0.0", &[])
+            .add_package(
+                "ripgrep",
+                "BurntSushi/ripgrep",
+                "14.0.0",
+                &[],
+                &[],
+                None,
+                None,
+            )
             .unwrap();
         state
-            .add_package("ripgrep", "BurntSushi/ripgrep", "15.0.0", &[])
+            .add_package(
+                "ripgrep",
+                "BurntSushi/ripgrep",
+                "15.0.0",
+                &[],
+                &[],
+                None,
+                None,
+            )
             .unwrap();
         state.set_active_version("ripgrep", Some("15.0.0")).unwrap();
 
-        state.add_package("fd", "sharkdp/fd", "8.0.0", &[]).unwrap();
-        state.add_package("fd", "sharkdp/fd", "9.0.0", &[]).unwrap();
+        state
+            .add_package("fd", "sharkdp/fd", "8.0.0", &[], &[], None, None)
+            .unwrap();
+        state
+            .add_package("fd", "sharkdp/fd", "9.0.0", &[], &[], None, None)
+            .unwrap();
         state.set_active_version("fd", Some("9.0.0")).unwrap();
 
         let mut installer = MockInstaller::new();
@@ -956,5 +1129,143 @@ mod tests {
 
         let fd = state.get_package("fd").unwrap().unwrap();
         assert!(fd.versions.contains_key("8.0.0")); // Did not prune fd
+    }
+
+    fn suffixed_asset_install(
+        repo: &str,
+        asset_name: &str,
+        bin: Option<&str>,
+        link: Option<&str>,
+    ) -> (JsonStateManager, GpmPaths, tempfile::TempDir) {
+        let temp = tempdir().unwrap();
+        let paths = GpmPaths::with_home(temp.path());
+        let state = JsonStateManager::new(paths.clone());
+
+        let mut http = MockHttpClient::new();
+        http.expect_download_file().returning(|_, dest| {
+            std::fs::write(dest, b"\x7fELFfakebinary")?;
+            Ok(())
+        });
+
+        let asset = asset_name.to_string();
+        let mut github = MockReleaseFetcher::new();
+        github.expect_get_release_by_tag().returning(move |_, tag| {
+            Ok(Release {
+                tag_name: tag.to_string(),
+                published_at: Utc::now(),
+                prerelease: false,
+                draft: false,
+                assets: vec![Asset {
+                    name: asset.clone(),
+                    browser_download_url: "http://example.com/a".to_string(),
+                    size: 100,
+                }],
+            })
+        });
+
+        let installer = GpmInstaller::new(
+            Arc::new(http),
+            Arc::new(ArchiveExtractor::new()),
+            paths.clone(),
+        );
+        let args = InstallArgs {
+            repo: repo.to_string(),
+            version: Some("v1.0".to_string()),
+            min_age: None,
+            pattern: None,
+            bin: bin.map(|s| s.to_string()),
+            link: link.map(|s| s.to_string()),
+        };
+
+        // Drive the async install to completion.
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(super::install(&installer, &github, &state, &args))
+            .unwrap();
+
+        (state, paths, temp)
+    }
+
+    #[test]
+    fn test_install_links_package_name_not_asset_name() {
+        let (state, paths, _tmp) = suffixed_asset_install(
+            "vercel-labs/agent-browser",
+            "agent-browser-linux-musl-x64",
+            None,
+            None,
+        );
+
+        assert!(paths.bin_dir().join("agent-browser").exists());
+        assert!(
+            !paths
+                .bin_dir()
+                .join("agent-browser-linux-musl-x64")
+                .exists()
+        );
+
+        let pkg = state.get_package("agent-browser").unwrap().unwrap();
+        assert_eq!(pkg.versions["v1.0"].bins, vec!["agent-browser".to_string()]);
+        assert!(
+            pkg.versions["v1.0"]
+                .files
+                .iter()
+                .any(|p| p.file_name().unwrap() == "agent-browser-linux-musl-x64")
+        );
+    }
+
+    #[test]
+    fn test_install_link_override_and_reinstall_unlinks_stale() {
+        let (state, paths, _tmp) = suffixed_asset_install(
+            "backnotprop/plannotator",
+            "plannotator-linux-x64",
+            None,
+            None,
+        );
+        assert!(paths.bin_dir().join("plannotator").exists());
+
+        // Re-install with --link override: old link must not leak.
+        let mut http = MockHttpClient::new();
+        http.expect_download_file().returning(|_, dest| {
+            std::fs::write(dest, b"\x7fELFfakebinary")?;
+            Ok(())
+        });
+        let mut github = MockReleaseFetcher::new();
+        github.expect_get_release_by_tag().returning(|_, tag| {
+            Ok(Release {
+                tag_name: tag.to_string(),
+                published_at: Utc::now(),
+                prerelease: false,
+                draft: false,
+                assets: vec![Asset {
+                    name: "plannotator-linux-x64".to_string(),
+                    browser_download_url: "http://example.com/a".to_string(),
+                    size: 100,
+                }],
+            })
+        });
+        let installer = GpmInstaller::new(
+            Arc::new(http),
+            Arc::new(ArchiveExtractor::new()),
+            paths.clone(),
+        );
+        let args = InstallArgs {
+            repo: "backnotprop/plannotator".to_string(),
+            version: Some("v1.0".to_string()),
+            min_age: None,
+            pattern: None,
+            bin: None,
+            link: Some("plan".to_string()),
+        };
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(super::install(&installer, &github, &state, &args))
+            .unwrap();
+
+        assert!(paths.bin_dir().join("plan").exists());
+        assert!(!paths.bin_dir().join("plannotator").exists());
     }
 }

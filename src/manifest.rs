@@ -10,17 +10,33 @@ pub struct Package {
     pub repo: String,
     pub active_version: Option<String>,
     pub versions: HashMap<String, VersionInfo>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bin: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub link: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct VersionInfo {
     pub files: Vec<PathBuf>,
+    #[serde(default)]
+    pub bins: Vec<String>,
 }
 
 pub trait StateManager: Send + Sync {
     fn get_packages(&self) -> Result<HashMap<String, Package>>;
     fn get_package(&self, name: &str) -> Result<Option<Package>>;
-    fn add_package(&self, name: &str, repo: &str, version: &str, files: &[PathBuf]) -> Result<()>;
+    #[allow(clippy::too_many_arguments)]
+    fn add_package(
+        &self,
+        name: &str,
+        repo: &str,
+        version: &str,
+        files: &[PathBuf],
+        bins: &[String],
+        bin: Option<&str>,
+        link: Option<&str>,
+    ) -> Result<()>;
     fn remove_package(&self, name: &str, version: Option<&str>) -> Result<Option<Package>>;
     fn set_active_version(&self, name: &str, version: Option<&str>) -> Result<()>;
 }
@@ -109,19 +125,34 @@ impl StateManager for JsonStateManager {
         self.load_receipt(name)
     }
 
-    fn add_package(&self, name: &str, repo: &str, version: &str, files: &[PathBuf]) -> Result<()> {
+    fn add_package(
+        &self,
+        name: &str,
+        repo: &str,
+        version: &str,
+        files: &[PathBuf],
+        bins: &[String],
+        bin: Option<&str>,
+        link: Option<&str>,
+    ) -> Result<()> {
         let mut pkg = self.load_receipt(name)?.unwrap_or_else(|| Package {
             repo: repo.to_string(),
             active_version: None,
             versions: HashMap::new(),
+            bin: None,
+            link: None,
         });
 
         pkg.versions.insert(
             version.to_string(),
             VersionInfo {
                 files: files.to_vec(),
+                bins: bins.to_vec(),
             },
         );
+        // Flags describe this install: explicit values (or None) win.
+        pkg.bin = bin.map(|s| s.to_string());
+        pkg.link = link.map(|s| s.to_string());
         pkg.active_version = Some(version.to_string());
 
         self.save_receipt(name, &pkg)
@@ -190,7 +221,9 @@ mod tests {
         let files = vec![PathBuf::from("rg")];
 
         // Add
-        manager.add_package(name, repo, version, &files).unwrap();
+        manager
+            .add_package(name, repo, version, &files, &[], None, None)
+            .unwrap();
 
         // Get
         let pkg = manager.get_package(name).unwrap().unwrap();
@@ -224,5 +257,50 @@ mod tests {
         fs::write(&path, "{ invalid json }").unwrap();
 
         let _pkg = manager.get_package("corrupted").unwrap();
+    }
+
+    #[test]
+    fn test_add_package_records_bins_and_selectors() {
+        let temp = tempdir().unwrap();
+        let paths = GpmPaths::with_home(temp.path());
+        let manager = JsonStateManager::new(paths);
+
+        let bins = vec!["mytool".to_string()];
+        manager
+            .add_package(
+                "mytool",
+                "owner/mytool",
+                "2.0",
+                &[PathBuf::from("client")],
+                &bins,
+                Some("client"),
+                None,
+            )
+            .unwrap();
+
+        let pkg = manager.get_package("mytool").unwrap().unwrap();
+        assert_eq!(pkg.bin, Some("client".to_string()));
+        assert_eq!(pkg.link, None);
+        assert_eq!(pkg.versions["2.0"].bins, bins);
+    }
+
+    #[test]
+    fn test_legacy_receipt_without_new_fields_loads() {
+        let temp = tempdir().unwrap();
+        let paths = GpmPaths::with_home(temp.path());
+        let manager = JsonStateManager::new(paths);
+
+        let receipts_dir = manager.paths.config_dir().join("receipts");
+        fs::create_dir_all(&receipts_dir).unwrap();
+        fs::write(
+            receipts_dir.join("legacy.json"),
+            r#"{"repo":"owner/legacy","active_version":"1.0","versions":{"1.0":{"files":["/cache/legacy/1.0/legacy-x64"]}}}"#,
+        )
+        .unwrap();
+
+        let pkg = manager.get_package("legacy").unwrap().unwrap();
+        assert_eq!(pkg.bin, None);
+        assert_eq!(pkg.link, None);
+        assert!(pkg.versions["1.0"].bins.is_empty());
     }
 }

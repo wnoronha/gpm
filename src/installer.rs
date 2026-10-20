@@ -22,9 +22,101 @@ pub trait Installer: Send + Sync {
         checksum_url: Option<&'a str>,
         checksum_name: Option<&'a str>,
     ) -> Result<Vec<PathBuf>>;
-    fn link(&self, name: &str, version: &str, files: &[PathBuf]) -> Result<()>;
-    fn unlink(&self, name: &str, files: &[PathBuf]) -> Result<()>;
+    fn link(&self, src_path: &Path, link_name: &str) -> Result<()>;
+    fn unlink(&self, name: &str, bins: &[String]) -> Result<()>;
     fn uninstall_version(&self, name: &str, version: &str, files: &[PathBuf]) -> Result<()>;
+}
+
+/// Pick which cached binary to link and under what name.
+///
+/// * `bin_filter` (`--bin`): exact filename- or stem-match first, then
+///   substring match. Zero or ambiguous matches are errors.
+/// * Without a filter exactly one binary must be present, else an error.
+/// * The link name defaults to the package name; a trailing `.exe` on the
+///   selected file is preserved without double-appending.
+pub fn resolve_link_target(
+    pkg_name: &str,
+    files: &[PathBuf],
+    bin_filter: Option<&str>,
+    link_name: Option<&str>,
+) -> Result<(PathBuf, String)> {
+    fn file_name(p: &Path) -> &str {
+        p.file_name().and_then(|s| s.to_str()).unwrap_or("")
+    }
+
+    let selected: &PathBuf = match bin_filter {
+        Some(sel) => {
+            let exact: Vec<&PathBuf> = files
+                .iter()
+                .filter(|p| {
+                    let name = file_name(p);
+                    name == sel || Path::new(name).file_stem().and_then(|s| s.to_str()) == Some(sel)
+                })
+                .collect();
+            if exact.len() == 1 {
+                exact[0]
+            } else if exact.len() > 1 {
+                return Err(ambiguous(sel, &exact));
+            } else {
+                let partial: Vec<&PathBuf> = files
+                    .iter()
+                    .filter(|p| file_name(p).contains(sel))
+                    .collect();
+                match partial.len() {
+                    1 => partial[0],
+                    0 => return Err(no_match(sel, files)),
+                    _ => return Err(ambiguous(sel, &partial)),
+                }
+            }
+        }
+        None => match files.len() {
+            0 => {
+                return Err(GpmError::Unknown(format!(
+                    "No executable binaries found for {}",
+                    pkg_name
+                )));
+            }
+            1 => &files[0],
+            _ => {
+                let mut names: Vec<&str> = files.iter().map(|p| file_name(p)).collect();
+                names.sort_unstable();
+                return Err(GpmError::Unknown(format!(
+                    "Multiple binaries found for {}: {}. Pass --bin <name> to select one.",
+                    pkg_name,
+                    names.join(", ")
+                )));
+            }
+        },
+    };
+
+    let mut name = link_name.unwrap_or(pkg_name).to_string();
+    if file_name(selected).to_lowercase().ends_with(".exe")
+        && !name.to_lowercase().ends_with(".exe")
+    {
+        name.push_str(".exe");
+    }
+
+    return Ok((selected.clone(), name));
+
+    fn no_match(sel: &str, files: &[PathBuf]) -> GpmError {
+        let mut names: Vec<&str> = files.iter().map(|p| file_name(p)).collect();
+        names.sort_unstable();
+        GpmError::Unknown(format!(
+            "No binary matching '{}'. Available: {}",
+            sel,
+            names.join(", ")
+        ))
+    }
+
+    fn ambiguous(sel: &str, matches: &[&PathBuf]) -> GpmError {
+        let mut names: Vec<&str> = matches.iter().map(|p| file_name(p)).collect();
+        names.sort_unstable();
+        GpmError::Unknown(format!(
+            "Ambiguous --bin '{}'. Matches: {}",
+            sel,
+            names.join(", ")
+        ))
+    }
 }
 
 pub struct GpmInstaller {
@@ -203,57 +295,49 @@ impl Installer for GpmInstaller {
         }
     }
 
-    fn link(&self, _name: &str, _version: &str, files: &[PathBuf]) -> Result<()> {
+    fn link(&self, src_path: &Path, link_name: &str) -> Result<()> {
         let bin_dir = self.paths.ensure_bin_dir()?;
         let cache_dir = self.paths.cache_dir().canonicalize()?;
 
-        for src_path in files {
-            if !src_path.exists() {
-                return Err(GpmError::Unknown(format!(
-                    "Cannot link missing file: {:?}. The cached binary might have been deleted. Try re-running gpm install with the --version flag.",
-                    src_path
-                )));
-            }
-            let src_path_canon = src_path.canonicalize()?;
-            if !src_path_canon.starts_with(&cache_dir) {
-                return Err(GpmError::Unknown(format!(
-                    "Security violation: Link source {:?} is outside cache directory.",
-                    src_path
-                )));
-            }
-
-            let file_name = src_path
-                .file_name()
-                .ok_or_else(|| GpmError::Unknown(format!("Invalid file path: {:?}", src_path)))?;
-            let dest_path = bin_dir.join(file_name);
-
-            if dest_path.exists() || dest_path.is_symlink() {
-                if dest_path.is_dir() && !dest_path.is_symlink() {
-                    fs::remove_dir_all(&dest_path)?;
-                } else {
-                    fs::remove_file(&dest_path)?;
-                }
-            }
-
-            symlink(src_path, &dest_path)?;
-            println!("Linked {:?} to {:?}", file_name, bin_dir);
+        if !src_path.exists() {
+            return Err(GpmError::Unknown(format!(
+                "Cannot link missing file: {:?}. The cached binary might have been deleted. Try re-running gpm install with the --version flag.",
+                src_path
+            )));
         }
+        let src_path_canon = src_path.canonicalize()?;
+        if !src_path_canon.starts_with(&cache_dir) {
+            return Err(GpmError::Unknown(format!(
+                "Security violation: Link source {:?} is outside cache directory.",
+                src_path
+            )));
+        }
+
+        let dest_path = bin_dir.join(link_name);
+
+        if dest_path.exists() || dest_path.is_symlink() {
+            if dest_path.is_dir() && !dest_path.is_symlink() {
+                fs::remove_dir_all(&dest_path)?;
+            } else {
+                fs::remove_file(&dest_path)?;
+            }
+        }
+
+        symlink(src_path, &dest_path)?;
+        println!("Linked {:?} to {:?}", link_name, bin_dir);
 
         Ok(())
     }
 
-    fn unlink(&self, _name: &str, files: &[PathBuf]) -> Result<()> {
+    fn unlink(&self, name: &str, bins: &[String]) -> Result<()> {
         let bin_dir = self.paths.bin_dir();
-        for path in files {
-            let file_name = path
-                .file_name()
-                .ok_or_else(|| GpmError::Unknown(format!("Invalid file path: {:?}", path)))?;
-            let dest_path = bin_dir.join(file_name);
+        for bin in bins {
+            let dest_path = bin_dir.join(bin);
             if dest_path.is_symlink() {
                 fs::remove_file(&dest_path)?;
-                println!("Unlinked {:?}", file_name);
+                println!("Unlinked {:?}", bin);
             } else if dest_path.exists() {
-                tracing::warn!("{:?} is not a symlink, skipping.", dest_path);
+                tracing::warn!("{:?} is not a symlink, skipping for {}.", dest_path, name);
             }
         }
         Ok(())
@@ -283,6 +367,39 @@ impl Installer for GpmInstaller {
 
         Ok(())
     }
+}
+
+fn symlink(src: &Path, dst: &Path) -> Result<()> {
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(src, dst)?;
+    }
+    #[cfg(windows)]
+    {
+        let res = if src.is_dir() {
+            std::os::windows::fs::symlink_dir(src, dst)
+        } else {
+            std::os::windows::fs::symlink_file(src, dst)
+        };
+
+        if let Err(e) = res {
+            if e.kind() == std::io::ErrorKind::PermissionDenied {
+                tracing::warn!(
+                    "Symlink permission denied on Windows. Falling back to copy. Source: {:?}, Destination: {:?}",
+                    src,
+                    dst
+                );
+                if src.is_dir() {
+                    return Err(e.into());
+                } else {
+                    std::fs::copy(src, dst)?;
+                }
+            } else {
+                return Err(e.into());
+            }
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -406,7 +523,7 @@ mod tests {
         let installer = GpmInstaller::new(http, extractor, paths);
 
         let missing_file = temp.path().join("does_not_exist");
-        let result = installer.link("test_pkg", "v1.0", &[missing_file]);
+        let result = installer.link(&missing_file, "test_pkg");
 
         assert!(result.is_err());
         let err_msg = result.unwrap_err().to_string();
@@ -432,7 +549,7 @@ mod tests {
         let cache_file = paths.cache_dir().join("my_bin");
         fs::write(&cache_file, b"test").unwrap();
 
-        installer.link("test_pkg", "v1.0", &[cache_file]).unwrap();
+        installer.link(&cache_file, "my_bin").unwrap();
 
         let bin_link = paths.bin_dir().join("my_bin");
         assert!(bin_link.exists());
@@ -465,7 +582,7 @@ mod tests {
         let cache_file = paths.cache_dir().join("my_bin");
         fs::write(&cache_file, b"new").unwrap();
 
-        installer.link("test_pkg", "v1.0", &[cache_file]).unwrap();
+        installer.link(&cache_file, "my_bin").unwrap();
 
         assert!(bin_file.exists());
         assert_eq!(fs::read_to_string(&bin_file).unwrap(), "new");
@@ -491,7 +608,7 @@ mod tests {
         let outside_file = temp.path().join("outside");
         fs::write(&outside_file, b"bad").unwrap();
 
-        let res = installer.link("test_pkg", "v1.0", &[outside_file]);
+        let res = installer.link(&outside_file, "evil");
         assert!(res.is_err());
         assert!(res.unwrap_err().to_string().contains("Security violation"));
     }
@@ -510,14 +627,14 @@ mod tests {
         fs::write(&cache_file, b"test").unwrap();
 
         let installer = GpmInstaller::new(http, extractor, paths.clone());
-        installer
-            .link("test_pkg", "v1.0", &[cache_file.clone()])
-            .unwrap();
+        installer.link(&cache_file, "my_bin").unwrap();
 
         let bin_file = paths.bin_dir().join("my_bin");
         assert!(bin_file.exists());
 
-        installer.unlink("test_pkg", &[cache_file.clone()]).unwrap();
+        installer
+            .unlink("test_pkg", &["my_bin".to_string()])
+            .unwrap();
 
         assert!(!bin_file.exists());
     }
@@ -541,46 +658,94 @@ mod tests {
         let installer = GpmInstaller::new(http, extractor, paths.clone());
 
         // This shouldn't error, and shouldn't remove the regular file
-        installer.unlink("test_pkg", &[cache_file.clone()]).unwrap();
+        installer
+            .unlink("test_pkg", &["my_bin".to_string()])
+            .unwrap();
 
         assert!(bin_file.exists());
         assert_eq!(fs::read_to_string(&bin_file).unwrap(), "regular");
 
         // Also test when it doesn't exist at all
         fs::remove_file(&bin_file).unwrap();
-        installer.unlink("test_pkg", &[cache_file]).unwrap();
+        installer
+            .unlink("test_pkg", &["my_bin".to_string()])
+            .unwrap();
     }
-}
 
-fn symlink(src: &Path, dst: &Path) -> Result<()> {
-    #[cfg(unix)]
-    {
-        std::os::unix::fs::symlink(src, dst)?;
+    #[test]
+    fn test_resolve_single_file_uses_package_name() {
+        let files = vec![PathBuf::from(
+            "/cache/agent-browser/v1/agent-browser-linux-musl-x64",
+        )];
+        let (target, name) = resolve_link_target("agent-browser", &files, None, None).unwrap();
+        assert_eq!(target, files[0]);
+        assert_eq!(name, "agent-browser");
     }
-    #[cfg(windows)]
-    {
-        let res = if src.is_dir() {
-            std::os::windows::fs::symlink_dir(src, dst)
-        } else {
-            std::os::windows::fs::symlink_file(src, dst)
-        };
 
-        if let Err(e) = res {
-            if e.kind() == std::io::ErrorKind::PermissionDenied {
-                tracing::warn!(
-                    "Symlink permission denied on Windows. Falling back to copy. Source: {:?}, Destination: {:?}",
-                    src,
-                    dst
-                );
-                if src.is_dir() {
-                    return Err(e.into());
-                } else {
-                    std::fs::copy(src, dst)?;
-                }
-            } else {
-                return Err(e.into());
-            }
-        }
+    #[test]
+    fn test_resolve_link_override() {
+        let files = vec![PathBuf::from("/cache/foo/v1/foo-x64")];
+        let (_, name) = resolve_link_target("foo", &files, None, Some("bar")).unwrap();
+        assert_eq!(name, "bar");
     }
-    Ok(())
+
+    #[test]
+    fn test_resolve_preserves_exe() {
+        let files = vec![PathBuf::from("C:/cache/foo/v1/foo.exe")];
+        let (_, name) = resolve_link_target("foo", &files, None, None).unwrap();
+        assert_eq!(name, "foo.exe");
+        let (_, again) = resolve_link_target("foo", &files, None, Some("bar.exe")).unwrap();
+        assert_eq!(again, "bar.exe");
+    }
+
+    #[test]
+    fn test_resolve_multi_without_filter_errors_sorted() {
+        let files = vec![
+            PathBuf::from("/cache/z/v1/z-helper"),
+            PathBuf::from("/cache/z/v1/a-main"),
+        ];
+        let err = resolve_link_target("z", &files, None, None)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("Multiple binaries"), "Got: {}", err);
+        assert!(err.contains("a-main, z-helper"), "Got: {}", err);
+    }
+
+    #[test]
+    fn test_resolve_bin_exact_beats_substring() {
+        let files = vec![
+            PathBuf::from("/cache/f/v1/foo-helper"),
+            PathBuf::from("/cache/f/v1/foo"),
+        ];
+        // Exact filename match wins over substring matches.
+        let (target, _) = resolve_link_target("f", &files, Some("foo"), None).unwrap();
+        assert_eq!(target, PathBuf::from("/cache/f/v1/foo"));
+        // Substring-only match still works.
+        let (target, _) = resolve_link_target("f", &files, Some("help"), None).unwrap();
+        assert_eq!(target, PathBuf::from("/cache/f/v1/foo-helper"));
+    }
+
+    #[test]
+    fn test_resolve_bin_no_match_and_ambiguous() {
+        let files = vec![
+            PathBuf::from("/cache/f/v1/foo-a"),
+            PathBuf::from("/cache/f/v1/foo-b"),
+        ];
+        let err = resolve_link_target("f", &files, Some("zzz"), None)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("No binary matching"), "Got: {}", err);
+        let err = resolve_link_target("f", &files, Some("foo"), None)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("Ambiguous"), "Got: {}", err);
+    }
+
+    #[test]
+    fn test_resolve_empty_errors() {
+        let err = resolve_link_target("ghost", &[], None, None)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("No executable binaries"), "Got: {}", err);
+    }
 }

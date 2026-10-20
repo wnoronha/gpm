@@ -44,6 +44,12 @@ pub struct InstallArgs {
     /// Pattern to match in the asset name (useful for multi-binary repos)
     #[arg(short, long)]
     pub pattern: Option<String>,
+    /// Select which binary to link (matched against discovered binary names)
+    #[arg(long)]
+    pub bin: Option<String>,
+    /// Override the link name (defaults to the package name)
+    #[arg(long)]
+    pub link: Option<String>,
 }
 
 #[derive(Args, Debug)]
@@ -61,6 +67,12 @@ pub struct LinkArgs {
     pub name: String,
     /// Specific version to link
     pub version: String,
+    /// Select which binary to link (matched against discovered binary names)
+    #[arg(long)]
+    pub bin: Option<String>,
+    /// Override the link name (defaults to the package name)
+    #[arg(long)]
+    pub link: Option<String>,
 }
 
 #[derive(Args, Debug)]
@@ -139,5 +151,37 @@ mod tests {
     fn test_list_parsing() {
         let cli = Cli::parse_from(["gpm", "list"]);
         assert!(matches!(cli.command, Commands::List));
+    }
+
+    #[test]
+    fn test_install_bin_link_parsing() {
+        let cli = Cli::parse_from([
+            "gpm",
+            "install",
+            "owner/repo",
+            "--bin",
+            "foo",
+            "--link",
+            "bar",
+        ]);
+        if let Commands::Install(args) = cli.command {
+            assert_eq!(args.bin, Some("foo".to_string()));
+            assert_eq!(args.link, Some("bar".to_string()));
+        } else {
+            panic!("Incorrect command parsed");
+        }
+    }
+
+    #[test]
+    fn test_link_parsing() {
+        let cli = Cli::parse_from(["gpm", "link", "ripgrep", "15.0.0"]);
+        if let Commands::Link(args) = cli.command {
+            assert_eq!(args.name, "ripgrep");
+            assert_eq!(args.version, "15.0.0");
+            assert_eq!(args.bin, None);
+            assert_eq!(args.link, None);
+        } else {
+            panic!("Incorrect command parsed");
+        }
     }
 }

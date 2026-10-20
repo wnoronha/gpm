@@ -88,13 +88,16 @@ mod tests {
             version: Some("v1.0".to_string()),
             min_age: None,
             pattern: None,
+            bin: None,
+            link: None,
         };
         commands::install(&installer, &github, &state, &install_args)
             .await
             .unwrap();
 
         let bin_dir = paths.bin_dir();
-        let binary_path = bin_dir.join("test-bin");
+        // Linked under the package name, not the asset filename.
+        let binary_path = bin_dir.join("testpkg");
         let cached_v1 = paths.cache_dir().join(name).join("v1.0").join("test-bin");
 
         assert!(binary_path.exists());
@@ -106,6 +109,8 @@ mod tests {
             version: Some("v2.0".to_string()),
             min_age: None,
             pattern: None,
+            bin: None,
+            link: None,
         };
         commands::install(&installer, &github, &state, &install_args_v2)
             .await
@@ -120,6 +125,8 @@ mod tests {
         let link_args = LinkArgs {
             name: name.to_string(),
             version: "v1.0".to_string(),
+            bin: None,
+            link: None,
         };
         commands::link(&installer, &state, &link_args).unwrap();
         assert_eq!(fs::read_link(&binary_path).unwrap(), cached_v1);

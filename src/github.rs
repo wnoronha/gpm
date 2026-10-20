@@ -31,13 +31,13 @@ pub trait ReleaseFetcher: Send + Sync {
     async fn get_release_by_tag(&self, repo: &str, tag: &str) -> Result<Release>;
 }
 
-pub struct GithubClient<'a> {
-    http: &'a dyn HttpClient,
+pub struct GithubClient {
+    http: std::sync::Arc<dyn HttpClient>,
     api_base: String,
 }
 
-impl<'a> GithubClient<'a> {
-    pub fn new(http: &'a dyn HttpClient) -> Self {
+impl GithubClient {
+    pub fn new(http: std::sync::Arc<dyn HttpClient>) -> Self {
         Self {
             http,
             api_base: std::env::var("GITHUB_API_URL")
@@ -251,7 +251,7 @@ fn get_arch_aliases(arch: &str) -> Vec<String> {
 }
 
 #[async_trait]
-impl<'a> ReleaseFetcher for GithubClient<'a> {
+impl ReleaseFetcher for GithubClient {
     async fn get_releases(&self, repo: &str) -> Result<Vec<Release>> {
         let mut all_releases = Vec::new();
         let mut url = format!("{}/repos/{}/releases?per_page=100", self.api_base, repo);
@@ -290,6 +290,13 @@ mod tests {
         assert_eq!(GithubClient::parse_age("7d").unwrap(), Duration::days(7));
         assert_eq!(GithubClient::parse_age("24h").unwrap(), Duration::hours(24));
         assert_eq!(GithubClient::parse_age("1m").unwrap(), Duration::days(30));
+    }
+
+    #[test]
+    fn test_parse_age_invalid() {
+        assert!(GithubClient::parse_age("").is_err());
+        assert!(GithubClient::parse_age("d").is_err());
+        assert!(GithubClient::parse_age("h").is_err());
     }
 
     #[test]

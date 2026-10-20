@@ -10,30 +10,35 @@ use crate::paths::GpmPaths;
 use async_trait::async_trait;
 use sha2::{Digest, Sha256};
 
+#[cfg_attr(test, mockall::automock)]
 #[async_trait]
 pub trait Installer: Send + Sync {
-    async fn install_and_discover(
-        &self,
-        repo: &str,
-        version: &str,
-        asset_url: &str,
-        asset_name: &str,
-        checksum_url: Option<&str>,
-        checksum_name: Option<&str>,
+    async fn install_and_discover<'a>(
+        &'a self,
+        repo: &'a str,
+        version: &'a str,
+        asset_url: &'a str,
+        asset_name: &'a str,
+        checksum_url: Option<&'a str>,
+        checksum_name: Option<&'a str>,
     ) -> Result<Vec<PathBuf>>;
     fn link(&self, name: &str, version: &str, files: &[PathBuf]) -> Result<()>;
     fn unlink(&self, name: &str, files: &[PathBuf]) -> Result<()>;
     fn uninstall_version(&self, name: &str, version: &str, files: &[PathBuf]) -> Result<()>;
 }
 
-pub struct GpmInstaller<'a> {
-    http: &'a dyn HttpClient,
-    extractor: &'a dyn Extractor,
+pub struct GpmInstaller {
+    http: std::sync::Arc<dyn HttpClient>,
+    extractor: std::sync::Arc<dyn Extractor>,
     paths: GpmPaths,
 }
 
-impl<'a> GpmInstaller<'a> {
-    pub fn new(http: &'a dyn HttpClient, extractor: &'a dyn Extractor, paths: GpmPaths) -> Self {
+impl GpmInstaller {
+    pub fn new(
+        http: std::sync::Arc<dyn HttpClient>,
+        extractor: std::sync::Arc<dyn Extractor>,
+        paths: GpmPaths,
+    ) -> Self {
         Self {
             http,
             extractor,
@@ -121,15 +126,15 @@ impl<'a> GpmInstaller<'a> {
 }
 
 #[async_trait]
-impl<'a> Installer for GpmInstaller<'a> {
-    async fn install_and_discover(
-        &self,
-        repo: &str,
-        version: &str,
-        asset_url: &str,
-        asset_name: &str,
-        checksum_url: Option<&str>,
-        checksum_name: Option<&str>,
+impl Installer for GpmInstaller {
+    async fn install_and_discover<'a>(
+        &'a self,
+        repo: &'a str,
+        version: &'a str,
+        asset_url: &'a str,
+        asset_name: &'a str,
+        checksum_url: Option<&'a str>,
+        checksum_name: Option<&'a str>,
     ) -> Result<Vec<PathBuf>> {
         let package_name = repo
             .split('/')
@@ -297,10 +302,10 @@ mod tests {
 
         let hash = "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"; // sha256 of "hello world" (no newline)
 
-        let http = MockHttpClient::new();
-        let extractor = MockExtractor::new();
+        let http = std::sync::Arc::new(MockHttpClient::new());
+        let extractor = std::sync::Arc::new(MockExtractor::new());
         let paths = GpmPaths::with_home(temp.path());
-        let installer = GpmInstaller::new(&http, &extractor, paths);
+        let installer = GpmInstaller::new(http, extractor, paths);
 
         installer
             .verify_checksum(&file_path, "test.bin", hash)
@@ -317,10 +322,10 @@ mod tests {
         let hash = "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9";
         let checksum_content = format!("{}  test.bin\notherhash  other.bin", hash);
 
-        let http = MockHttpClient::new();
-        let extractor = MockExtractor::new();
+        let http = std::sync::Arc::new(MockHttpClient::new());
+        let extractor = std::sync::Arc::new(MockExtractor::new());
         let paths = GpmPaths::with_home(temp.path());
-        let installer = GpmInstaller::new(&http, &extractor, paths);
+        let installer = GpmInstaller::new(http, extractor, paths);
 
         installer
             .verify_checksum(&file_path, "test.bin", &checksum_content)
@@ -336,10 +341,10 @@ mod tests {
 
         let hash = "wronghash";
 
-        let http = MockHttpClient::new();
-        let extractor = MockExtractor::new();
+        let http = std::sync::Arc::new(MockHttpClient::new());
+        let extractor = std::sync::Arc::new(MockExtractor::new());
         let paths = GpmPaths::with_home(temp.path());
-        let installer = GpmInstaller::new(&http, &extractor, paths);
+        let installer = GpmInstaller::new(http, extractor, paths);
 
         assert!(
             installer
@@ -358,10 +363,10 @@ mod tests {
         let hash = "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9";
         let checksum_content = format!("{}  my cool asset.bin\notherhash  other.bin", hash);
 
-        let http = MockHttpClient::new();
-        let extractor = MockExtractor::new();
+        let http = std::sync::Arc::new(MockHttpClient::new());
+        let extractor = std::sync::Arc::new(MockExtractor::new());
         let paths = GpmPaths::with_home(temp.path());
-        let installer = GpmInstaller::new(&http, &extractor, paths);
+        let installer = GpmInstaller::new(http, extractor, paths);
 
         installer
             .verify_checksum(&file_path, "my cool asset.bin", &checksum_content)
@@ -378,10 +383,10 @@ mod tests {
         let hash = "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9";
         let checksum_content = format!("{}  ./build/dist/asset.bin\notherhash  other.bin", hash);
 
-        let http = MockHttpClient::new();
-        let extractor = MockExtractor::new();
+        let http = std::sync::Arc::new(MockHttpClient::new());
+        let extractor = std::sync::Arc::new(MockExtractor::new());
         let paths = GpmPaths::with_home(temp.path());
-        let installer = GpmInstaller::new(&http, &extractor, paths);
+        let installer = GpmInstaller::new(http, extractor, paths);
 
         installer
             .verify_checksum(&file_path, "asset.bin", &checksum_content)
@@ -391,14 +396,14 @@ mod tests {
     #[test]
     fn test_link_missing_file_returns_error() {
         let temp = tempdir().unwrap();
-        let http = MockHttpClient::new();
-        let extractor = MockExtractor::new();
+        let http = std::sync::Arc::new(MockHttpClient::new());
+        let extractor = std::sync::Arc::new(MockExtractor::new());
         let paths = GpmPaths::with_home(temp.path());
 
         fs::create_dir_all(paths.cache_dir()).unwrap();
         fs::create_dir_all(paths.bin_dir()).unwrap();
 
-        let installer = GpmInstaller::new(&http, &extractor, paths);
+        let installer = GpmInstaller::new(http, extractor, paths);
 
         let missing_file = temp.path().join("does_not_exist");
         let result = installer.link("test_pkg", "v1.0", &[missing_file]);
@@ -415,14 +420,14 @@ mod tests {
     #[test]
     fn test_link_creates_symlink() {
         let temp = tempdir().unwrap();
-        let http = MockHttpClient::new();
-        let extractor = MockExtractor::new();
+        let http = std::sync::Arc::new(MockHttpClient::new());
+        let extractor = std::sync::Arc::new(MockExtractor::new());
         let paths = GpmPaths::with_home(temp.path());
 
         fs::create_dir_all(paths.cache_dir()).unwrap();
         fs::create_dir_all(paths.bin_dir()).unwrap();
 
-        let installer = GpmInstaller::new(&http, &extractor, paths.clone());
+        let installer = GpmInstaller::new(http, extractor, paths.clone());
 
         let cache_file = paths.cache_dir().join("my_bin");
         fs::write(&cache_file, b"test").unwrap();
@@ -442,8 +447,8 @@ mod tests {
     #[test]
     fn test_link_replaces_existing_symlink_or_file() {
         let temp = tempdir().unwrap();
-        let http = MockHttpClient::new();
-        let extractor = MockExtractor::new();
+        let http = std::sync::Arc::new(MockHttpClient::new());
+        let extractor = std::sync::Arc::new(MockExtractor::new());
         let paths = GpmPaths::with_home(temp.path());
 
         fs::create_dir_all(paths.cache_dir()).unwrap();
@@ -452,7 +457,7 @@ mod tests {
         let bin_file = paths.bin_dir().join("my_bin");
         fs::write(&bin_file, b"old").unwrap();
 
-        let installer = GpmInstaller::new(&http, &extractor, paths.clone());
+        let installer = GpmInstaller::new(http, extractor, paths.clone());
 
         let cache_file = paths.cache_dir().join("my_bin");
         fs::write(&cache_file, b"new").unwrap();
@@ -471,14 +476,14 @@ mod tests {
     #[test]
     fn test_link_security_violation() {
         let temp = tempdir().unwrap();
-        let http = MockHttpClient::new();
-        let extractor = MockExtractor::new();
+        let http = std::sync::Arc::new(MockHttpClient::new());
+        let extractor = std::sync::Arc::new(MockExtractor::new());
         let paths = GpmPaths::with_home(temp.path());
 
         fs::create_dir_all(paths.cache_dir()).unwrap();
         fs::create_dir_all(paths.bin_dir()).unwrap();
 
-        let installer = GpmInstaller::new(&http, &extractor, paths.clone());
+        let installer = GpmInstaller::new(http, extractor, paths.clone());
 
         let outside_file = temp.path().join("outside");
         fs::write(&outside_file, b"bad").unwrap();
@@ -491,8 +496,8 @@ mod tests {
     #[test]
     fn test_unlink_removes_symlink() {
         let temp = tempdir().unwrap();
-        let http = MockHttpClient::new();
-        let extractor = MockExtractor::new();
+        let http = std::sync::Arc::new(MockHttpClient::new());
+        let extractor = std::sync::Arc::new(MockExtractor::new());
         let paths = GpmPaths::with_home(temp.path());
 
         fs::create_dir_all(paths.cache_dir()).unwrap();
@@ -501,7 +506,7 @@ mod tests {
         let cache_file = paths.cache_dir().join("my_bin");
         fs::write(&cache_file, b"test").unwrap();
 
-        let installer = GpmInstaller::new(&http, &extractor, paths.clone());
+        let installer = GpmInstaller::new(http, extractor, paths.clone());
         installer.link("test_pkg", "v1.0", &[cache_file.clone()]).unwrap();
         
         let bin_file = paths.bin_dir().join("my_bin");
@@ -515,8 +520,8 @@ mod tests {
     #[test]
     fn test_unlink_noop_when_absent_or_file() {
         let temp = tempdir().unwrap();
-        let http = MockHttpClient::new();
-        let extractor = MockExtractor::new();
+        let http = std::sync::Arc::new(MockHttpClient::new());
+        let extractor = std::sync::Arc::new(MockExtractor::new());
         let paths = GpmPaths::with_home(temp.path());
 
         fs::create_dir_all(paths.cache_dir()).unwrap();
@@ -528,7 +533,7 @@ mod tests {
         let bin_file = paths.bin_dir().join("my_bin");
         fs::write(&bin_file, b"regular").unwrap();
 
-        let installer = GpmInstaller::new(&http, &extractor, paths.clone());
+        let installer = GpmInstaller::new(http, extractor, paths.clone());
         
         // This shouldn't error, and shouldn't remove the regular file
         installer.unlink("test_pkg", &[cache_file.clone()]).unwrap();

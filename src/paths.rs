@@ -113,4 +113,19 @@ mod tests {
         let paths = GpmPaths::with_home(temp_path);
         assert_eq!(paths.home_dir(), temp_path);
     }
+
+    #[test]
+    fn test_gpm_home_env_var() {
+        let temp = tempdir().unwrap();
+        let temp_path = temp.path();
+        unsafe { env::set_var("GPM_HOME", temp_path); }
+        
+        let paths = GpmPaths::new();
+        assert_eq!(paths.home_dir(), temp_path);
+        assert_eq!(paths.config_dir(), temp_path.join(".config").join("gpm"));
+        assert_eq!(paths.cache_dir(), temp_path.join(".cache").join("gpm"));
+        assert_eq!(paths.bin_dir(), temp_path.join(".local").join("bin"));
+        
+        unsafe { env::remove_var("GPM_HOME"); }
+    }
 }

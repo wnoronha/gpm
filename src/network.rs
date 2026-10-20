@@ -144,3 +144,137 @@ impl HttpClient for ReqwestClient {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use std::time::Duration;
+    use tokio::time;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    #[tokio::test]
+    async fn test_retry_on_429() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/api"))
+            .respond_with(ResponseTemplate::new(429))
+            .up_to_n_times(1)
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        Mock::given(method("GET"))
+            .and(path("/api"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ok": true})))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        time::pause();
+        let client = ReqwestClient::new().unwrap();
+        let url = format!("{}/api", mock_server.uri());
+        let res = client.fetch_json(&url).await.unwrap();
+        assert_eq!(res["ok"], true);
+    }
+
+    #[tokio::test]
+    async fn test_retry_on_500() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/api"))
+            .respond_with(ResponseTemplate::new(500))
+            .up_to_n_times(1)
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        Mock::given(method("GET"))
+            .and(path("/api"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ok": true})))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        time::pause();
+        let client = ReqwestClient::new().unwrap();
+        let url = format!("{}/api", mock_server.uri());
+        let res = client.fetch_json(&url).await.unwrap();
+        assert_eq!(res["ok"], true);
+    }
+
+    #[tokio::test]
+    async fn test_retry_after_header_respected() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/api"))
+            .respond_with(
+                ResponseTemplate::new(429).insert_header("Retry-After", "5"),
+            )
+            .up_to_n_times(1)
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        Mock::given(method("GET"))
+            .and(path("/api"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ok": true})))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        time::pause();
+        let start = time::Instant::now();
+        let client = ReqwestClient::new().unwrap();
+        let url = format!("{}/api", mock_server.uri());
+        let res = client.fetch_json(&url).await.unwrap();
+        
+        let elapsed = start.elapsed();
+        assert_eq!(res["ok"], true);
+        assert!(elapsed >= Duration::from_secs(5));
+    }
+
+    #[tokio::test]
+    async fn test_max_retries_exceeded() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/api"))
+            .respond_with(ResponseTemplate::new(500))
+            .expect(4) // 1 initial + 3 retries
+            .mount(&mock_server)
+            .await;
+
+        time::pause();
+        let client = ReqwestClient::new().unwrap();
+        let url = format!("{}/api", mock_server.uri());
+        let res = client.fetch_json(&url).await;
+        
+        assert!(res.is_err());
+        assert!(res.unwrap_err().to_string().contains("HTTP Error 500"));
+    }
+
+    #[tokio::test]
+    async fn test_non_retryable_error() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/api"))
+            .respond_with(ResponseTemplate::new(404))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        time::pause();
+        let client = ReqwestClient::new().unwrap();
+        let url = format!("{}/api", mock_server.uri());
+        let res = client.fetch_json(&url).await;
+        
+        assert!(res.is_err());
+        assert!(res.unwrap_err().to_string().contains("HTTP Error 404"));
+    }
+}

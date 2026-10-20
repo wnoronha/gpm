@@ -449,8 +449,6 @@ pub async fn self_update() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
-
     use chrono::Utc;
     use tempfile::tempdir;
 
@@ -603,5 +601,356 @@ mod tests {
             .unwrap();
 
         assert_eq!(output, "All packages are up to date.");
+    }
+
+    #[tokio::test]
+    async fn test_install_with_version_skips_get_releases() {
+        let (state, _tmp) = setup_state();
+
+        let mut github = MockReleaseFetcher::new();
+        github.expect_get_releases().times(0); // MUST NOT BE CALLED
+
+        let release = Release {
+            tag_name: "v1.0.0".to_string(),
+            published_at: Utc::now(),
+            prerelease: false,
+            draft: false,
+            assets: vec![Asset {
+                name: "rg-linux.tar.gz".to_string(),
+                browser_download_url: "".to_string(),
+                size: 100,
+            }],
+        };
+
+        github
+            .expect_get_release_by_tag()
+            .with(
+                mockall::predicate::eq("owner/repo"),
+                mockall::predicate::eq("v1.0.0"),
+            )
+            .returning(move |_, _| Ok(release.clone()));
+
+        struct DummyInstaller;
+        #[async_trait::async_trait]
+        impl crate::installer::Installer for DummyInstaller {
+            async fn install_and_discover<'a>(
+                &'a self,
+                _r: &'a str,
+                _v: &'a str,
+                _au: &'a str,
+                _an: &'a str,
+                _cu: Option<&'a str>,
+                _cn: Option<&'a str>,
+            ) -> crate::errors::Result<Vec<std::path::PathBuf>> {
+                Ok(vec![])
+            }
+            fn link(
+                &self,
+                _name: &str,
+                _version: &str,
+                _files: &[std::path::PathBuf],
+            ) -> crate::errors::Result<()> {
+                Ok(())
+            }
+            fn unlink(
+                &self,
+                _name: &str,
+                _files: &[std::path::PathBuf],
+            ) -> crate::errors::Result<()> {
+                Ok(())
+            }
+            fn uninstall_version(
+                &self,
+                _name: &str,
+                _version: &str,
+                _files: &[std::path::PathBuf],
+            ) -> crate::errors::Result<()> {
+                Ok(())
+            }
+        }
+
+        let installer = DummyInstaller;
+
+        let args = crate::cli::InstallArgs {
+            repo: "owner/repo".to_string(),
+            version: Some("v1.0.0".to_string()),
+            min_age: None,
+            pattern: None,
+        };
+
+        super::install(&installer, &github, &state, &args)
+            .await
+            .unwrap();
+    }
+    use crate::cli::{UpgradeArgs, PruneArgs};
+    use crate::installer::MockInstaller;
+    use mockall::predicate;
+
+    #[tokio::test]
+    async fn test_upgrade_up_to_date_skip() {
+        let (state, _tmp) = setup_state();
+        state
+            .add_package("ripgrep", "BurntSushi/ripgrep", "15.0.0", &[])
+            .unwrap();
+
+        let release = Release {
+            tag_name: "15.0.0".to_string(),
+            published_at: Utc::now(),
+            prerelease: false,
+            draft: false,
+            assets: vec![],
+        };
+
+        let mut github = MockReleaseFetcher::new();
+        github
+            .expect_get_releases()
+            .returning(move |_| Ok(vec![release.clone()]));
+
+        let mut installer = MockInstaller::new();
+        // Should not call install
+        installer.expect_install_and_discover().times(0);
+
+        let args = UpgradeArgs {
+            package: None,
+            yes: true,
+            min_age: None,
+            pattern: None,
+        };
+
+        super::upgrade(&installer, &github, &state, &args)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_upgrade_out_of_date_with_yes() {
+        let (state, _tmp) = setup_state();
+        state
+            .add_package("ripgrep", "BurntSushi/ripgrep", "14.0.0", &[])
+            .unwrap();
+
+        let release = Release {
+            tag_name: "15.0.0".to_string(),
+            published_at: Utc::now(),
+            prerelease: false,
+            draft: false,
+            assets: vec![Asset {
+                name: "rg-linux-x86_64".to_string(),
+                browser_download_url: "url".to_string(),
+                size: 100,
+            }],
+        };
+
+        let mut github = MockReleaseFetcher::new();
+        let release_clone1 = release.clone();
+        github
+            .expect_get_releases()
+            .returning(move |_| Ok(vec![release_clone1.clone()]));
+            
+        let release_clone2 = release.clone(); // Added mock expectation for get_release_by_tag
+        github
+            .expect_get_release_by_tag()
+            .returning(move |_, _| Ok(release_clone2.clone()));
+
+        let mut installer = MockInstaller::new();
+        installer
+            .expect_install_and_discover()
+            .times(1)
+            .returning(|_, _, _, _, _, _| Ok(vec![]));
+        installer.expect_link().times(1).returning(|_, _, _| Ok(()));
+
+        let args = UpgradeArgs {
+            package: None,
+            yes: true,
+            min_age: None,
+            pattern: None,
+        };
+
+        super::upgrade(&installer, &github, &state, &args)
+            .await
+            .unwrap();
+    }
+
+
+
+    #[tokio::test]
+    async fn test_upgrade_out_of_date_with_yes_declined() {
+        unsafe { std::env::set_var("GPM_TEST_DECLINE", "1"); }
+        
+        let (state, _tmp) = setup_state();
+        state
+            .add_package("ripgrep", "BurntSushi/ripgrep", "14.0.0", &[])
+            .unwrap();
+
+        let release = Release {
+            tag_name: "15.0.0".to_string(),
+            published_at: Utc::now(),
+            prerelease: false,
+            draft: false,
+            assets: vec![],
+        };
+
+        let mut github = MockReleaseFetcher::new();
+        github
+            .expect_get_releases()
+            .returning(move |_| Ok(vec![release.clone()]));
+
+        let mut installer = MockInstaller::new();
+        installer.expect_install_and_discover().times(0); // Declined
+
+        let args = UpgradeArgs {
+            package: None,
+            yes: false,
+            min_age: None,
+            pattern: None,
+        };
+
+        super::upgrade(&installer, &github, &state, &args)
+            .await
+            .unwrap();
+            
+        unsafe { std::env::remove_var("GPM_TEST_DECLINE"); }
+    }
+    #[tokio::test]
+    async fn test_upgrade_single_package_targeting() {
+        let (state, _tmp) = setup_state();
+        state
+            .add_package("ripgrep", "BurntSushi/ripgrep", "14.0.0", &[])
+            .unwrap();
+        state
+            .add_package("fd", "sharkdp/fd", "8.0.0", &[])
+            .unwrap();
+
+        let release = Release {
+            tag_name: "15.0.0".to_string(),
+            published_at: Utc::now(),
+            prerelease: false,
+            draft: false,
+            assets: vec![Asset {
+                name: "rg-linux-x86_64".to_string(),
+                browser_download_url: "url".to_string(),
+                size: 100,
+            }],
+        };
+
+        let mut github = MockReleaseFetcher::new();
+        // Should only be called for ripgrep
+        let release_clone1 = release.clone();
+        github
+            .expect_get_releases()
+            .with(predicate::eq("BurntSushi/ripgrep"))
+            .times(1)
+            .returning(move |_| Ok(vec![release_clone1.clone()]));
+            
+        let release_clone2 = release.clone();
+        github
+            .expect_get_release_by_tag()
+            .with(predicate::eq("BurntSushi/ripgrep"), predicate::eq("15.0.0"))
+            .returning(move |_, _| Ok(release_clone2.clone()));
+
+        let mut installer = MockInstaller::new();
+        installer
+            .expect_install_and_discover()
+            .times(1)
+            .returning(|_, _, _, _, _, _| Ok(vec![]));
+        installer.expect_link().times(1).returning(|_, _, _| Ok(()));
+
+        let args = UpgradeArgs {
+            package: Some("ripgrep".to_string()),
+            yes: true,
+            min_age: None,
+            pattern: None,
+        };
+
+        super::upgrade(&installer, &github, &state, &args)
+            .await
+            .unwrap();
+    }
+
+    #[test]
+    fn test_prune_inactive_versions_removed() {
+        let (state, _tmp) = setup_state();
+        state
+            .add_package("ripgrep", "BurntSushi/ripgrep", "14.0.0", &[])
+            .unwrap();
+        state
+            .add_package("ripgrep", "BurntSushi/ripgrep", "15.0.0", &[])
+            .unwrap();
+        state.set_active_version("ripgrep", Some("15.0.0")).unwrap();
+
+        let mut installer = MockInstaller::new();
+        installer
+            .expect_uninstall_version()
+            .with(predicate::eq("ripgrep"), predicate::eq("14.0.0"), predicate::always())
+            .times(1)
+            .returning(|_, _, _| Ok(()));
+
+        let args = PruneArgs {
+            package: None,
+            yes: true,
+        };
+
+        super::prune(&installer, &state, &args).unwrap();
+        
+        // Ensure 14.0.0 is gone
+        let pkg = state.get_package("ripgrep").unwrap().unwrap();
+        assert!(!pkg.versions.contains_key("14.0.0"));
+        assert!(pkg.versions.contains_key("15.0.0"));
+    }
+
+    #[test]
+    fn test_prune_noop_when_only_active_version_exists() {
+        let (state, _tmp) = setup_state();
+        state
+            .add_package("ripgrep", "BurntSushi/ripgrep", "15.0.0", &[])
+            .unwrap();
+        state.set_active_version("ripgrep", Some("15.0.0")).unwrap();
+
+        let mut installer = MockInstaller::new();
+        installer.expect_uninstall_version().times(0);
+
+        let args = PruneArgs {
+            package: None,
+            yes: true,
+        };
+
+        super::prune(&installer, &state, &args).unwrap();
+    }
+
+    #[test]
+    fn test_prune_single_package_targeting() {
+        let (state, _tmp) = setup_state();
+        state
+            .add_package("ripgrep", "BurntSushi/ripgrep", "14.0.0", &[])
+            .unwrap();
+        state
+            .add_package("ripgrep", "BurntSushi/ripgrep", "15.0.0", &[])
+            .unwrap();
+        state.set_active_version("ripgrep", Some("15.0.0")).unwrap();
+
+        state
+            .add_package("fd", "sharkdp/fd", "8.0.0", &[])
+            .unwrap();
+        state
+            .add_package("fd", "sharkdp/fd", "9.0.0", &[])
+            .unwrap();
+        state.set_active_version("fd", Some("9.0.0")).unwrap();
+
+        let mut installer = MockInstaller::new();
+        installer
+            .expect_uninstall_version()
+            .with(predicate::eq("ripgrep"), predicate::eq("14.0.0"), predicate::always())
+            .times(1)
+            .returning(|_, _, _| Ok(()));
+
+        let args = PruneArgs {
+            package: Some("ripgrep".to_string()),
+            yes: true,
+        };
+
+        super::prune(&installer, &state, &args).unwrap();
+        
+        let fd = state.get_package("fd").unwrap().unwrap();
+        assert!(fd.versions.contains_key("8.0.0")); // Did not prune fd
     }
 }

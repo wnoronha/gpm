@@ -18,10 +18,10 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     let paths = gpm::paths::GpmPaths::new();
-    let http = ReqwestClient::new()?;
-    let github = GithubClient::new(&http);
-    let extractor = ArchiveExtractor::new();
-    let installer = GpmInstaller::new(&http, &extractor, paths.clone());
+    let http = std::sync::Arc::new(ReqwestClient::new()?);
+    let github = GithubClient::new(http.clone());
+    let extractor = std::sync::Arc::new(ArchiveExtractor::new());
+    let installer = GpmInstaller::new(http, extractor, paths.clone());
     let state = JsonStateManager::new(paths);
 
     match cli.command {

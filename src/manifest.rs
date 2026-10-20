@@ -211,4 +211,18 @@ mod tests {
         manager.remove_package(name, None).unwrap();
         assert!(manager.get_package(name).unwrap().is_none());
     }
+
+    #[test]
+    fn test_corrupted_receipt_warns() {
+        let temp = tempdir().unwrap();
+        let paths = GpmPaths::with_home(temp.path());
+        let manager = JsonStateManager::new(paths);
+
+        let receipts_dir = manager.paths.config_dir().join("receipts");
+        fs::create_dir_all(&receipts_dir).unwrap();
+        let path = receipts_dir.join("corrupted.json");
+        fs::write(&path, "{ invalid json }").unwrap();
+
+        let _pkg = manager.get_package("corrupted").unwrap();
+    }
 }

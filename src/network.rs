@@ -16,6 +16,7 @@ const USER_AGENT: &str = "gpm-cli";
 #[async_trait]
 pub trait HttpClient: Send + Sync {
     async fn fetch_json(&self, url: &str) -> Result<Value>;
+    async fn fetch_json_with_link(&self, url: &str) -> Result<(Value, Option<String>)>;
     async fn download_file(&self, url: &str, dest: &Path) -> Result<()>;
 }
 
@@ -98,11 +99,31 @@ impl ReqwestClient {
 #[async_trait]
 impl HttpClient for ReqwestClient {
     async fn fetch_json(&self, url: &str) -> Result<Value> {
+        self.fetch_json_with_link(url).await.map(|(v, _)| v)
+    }
+
+    async fn fetch_json_with_link(&self, url: &str) -> Result<(Value, Option<String>)> {
         let response = self.send_with_retry(url).await?;
-        response
+        let next_link = response.headers().get(header::LINK).and_then(|h| {
+            let link_str = h.to_str().ok()?;
+            for part in link_str.split(',') {
+                let mut segments = part.split(';');
+                let url_part = segments.next()?.trim();
+                let rel_part = segments.next()?.trim();
+                if rel_part == "rel=\"next\"" {
+                    let url = url_part.trim_start_matches('<').trim_end_matches('>');
+                    return Some(url.to_string());
+                }
+            }
+            None
+        });
+
+        let value = response
             .json::<Value>()
             .await
-            .map_err(|e| GpmError::NetworkError(e.to_string()))
+            .map_err(|e| GpmError::NetworkError(e.to_string()))?;
+
+        Ok((value, next_link))
     }
 
     async fn download_file(&self, url: &str, dest: &Path) -> Result<()> {

@@ -47,10 +47,13 @@ impl JsonStateManager {
             return Ok(None);
         }
 
-        let content = fs::read_to_string(path)?;
+        let content = fs::read_to_string(&path)?;
         match serde_json::from_str(&content) {
             Ok(pkg) => Ok(Some(pkg)),
-            Err(_) => Ok(None), // Task says corrupted receipts return None, not crash
+            Err(e) => {
+                tracing::warn!("Failed to parse receipt at {:?}: {}", path, e);
+                Ok(None)
+            }
         }
     }
 

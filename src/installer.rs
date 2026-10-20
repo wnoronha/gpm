@@ -203,6 +203,12 @@ impl<'a> Installer for GpmInstaller<'a> {
         let cache_dir = self.paths.cache_dir().canonicalize()?;
 
         for src_path in files {
+            if !src_path.exists() {
+                return Err(GpmError::Unknown(format!(
+                    "Cannot link missing file: {:?}. The cached binary might have been deleted. Try re-running gpm install with the --version flag.",
+                    src_path
+                )));
+            }
             let src_path_canon = src_path.canonicalize()?;
             if !src_path_canon.starts_with(&cache_dir) {
                 return Err(GpmError::Unknown(format!(
@@ -289,7 +295,7 @@ mod tests {
         let mut f = fs::File::create(&file_path).unwrap();
         f.write_all(b"hello world").unwrap();
 
-        let hash = "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"; // sha256 of "hello world"
+        let hash = "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"; // sha256 of "hello world" (no newline)
 
         let http = MockHttpClient::new();
         let extractor = MockExtractor::new();
@@ -380,6 +386,159 @@ mod tests {
         installer
             .verify_checksum(&file_path, "asset.bin", &checksum_content)
             .unwrap();
+    }
+
+    #[test]
+    fn test_link_missing_file_returns_error() {
+        let temp = tempdir().unwrap();
+        let http = MockHttpClient::new();
+        let extractor = MockExtractor::new();
+        let paths = GpmPaths::with_home(temp.path());
+
+        fs::create_dir_all(paths.cache_dir()).unwrap();
+        fs::create_dir_all(paths.bin_dir()).unwrap();
+
+        let installer = GpmInstaller::new(&http, &extractor, paths);
+
+        let missing_file = temp.path().join("does_not_exist");
+        let result = installer.link("test_pkg", "v1.0", &[missing_file]);
+
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("Cannot link missing file"),
+            "Got err: {}",
+            err_msg
+        );
+    }
+
+    #[test]
+    fn test_link_creates_symlink() {
+        let temp = tempdir().unwrap();
+        let http = MockHttpClient::new();
+        let extractor = MockExtractor::new();
+        let paths = GpmPaths::with_home(temp.path());
+
+        fs::create_dir_all(paths.cache_dir()).unwrap();
+        fs::create_dir_all(paths.bin_dir()).unwrap();
+
+        let installer = GpmInstaller::new(&http, &extractor, paths.clone());
+
+        let cache_file = paths.cache_dir().join("my_bin");
+        fs::write(&cache_file, b"test").unwrap();
+
+        installer.link("test_pkg", "v1.0", &[cache_file]).unwrap();
+
+        let bin_link = paths.bin_dir().join("my_bin");
+        assert!(bin_link.exists());
+        
+        #[cfg(unix)]
+        {
+            assert!(fs::symlink_metadata(&bin_link).unwrap().is_symlink());
+            assert_eq!(fs::read_link(&bin_link).unwrap(), paths.cache_dir().canonicalize().unwrap().join("my_bin"));
+        }
+    }
+
+    #[test]
+    fn test_link_replaces_existing_symlink_or_file() {
+        let temp = tempdir().unwrap();
+        let http = MockHttpClient::new();
+        let extractor = MockExtractor::new();
+        let paths = GpmPaths::with_home(temp.path());
+
+        fs::create_dir_all(paths.cache_dir()).unwrap();
+        fs::create_dir_all(paths.bin_dir()).unwrap();
+
+        let bin_file = paths.bin_dir().join("my_bin");
+        fs::write(&bin_file, b"old").unwrap();
+
+        let installer = GpmInstaller::new(&http, &extractor, paths.clone());
+
+        let cache_file = paths.cache_dir().join("my_bin");
+        fs::write(&cache_file, b"new").unwrap();
+
+        installer.link("test_pkg", "v1.0", &[cache_file]).unwrap();
+
+        assert!(bin_file.exists());
+        assert_eq!(fs::read_to_string(&bin_file).unwrap(), "new");
+        
+        #[cfg(unix)]
+        {
+            assert!(fs::symlink_metadata(&bin_file).unwrap().is_symlink());
+        }
+    }
+
+    #[test]
+    fn test_link_security_violation() {
+        let temp = tempdir().unwrap();
+        let http = MockHttpClient::new();
+        let extractor = MockExtractor::new();
+        let paths = GpmPaths::with_home(temp.path());
+
+        fs::create_dir_all(paths.cache_dir()).unwrap();
+        fs::create_dir_all(paths.bin_dir()).unwrap();
+
+        let installer = GpmInstaller::new(&http, &extractor, paths.clone());
+
+        let outside_file = temp.path().join("outside");
+        fs::write(&outside_file, b"bad").unwrap();
+
+        let res = installer.link("test_pkg", "v1.0", &[outside_file]);
+        assert!(res.is_err());
+        assert!(res.unwrap_err().to_string().contains("Security violation"));
+    }
+
+    #[test]
+    fn test_unlink_removes_symlink() {
+        let temp = tempdir().unwrap();
+        let http = MockHttpClient::new();
+        let extractor = MockExtractor::new();
+        let paths = GpmPaths::with_home(temp.path());
+
+        fs::create_dir_all(paths.cache_dir()).unwrap();
+        fs::create_dir_all(paths.bin_dir()).unwrap();
+
+        let cache_file = paths.cache_dir().join("my_bin");
+        fs::write(&cache_file, b"test").unwrap();
+
+        let installer = GpmInstaller::new(&http, &extractor, paths.clone());
+        installer.link("test_pkg", "v1.0", &[cache_file.clone()]).unwrap();
+        
+        let bin_file = paths.bin_dir().join("my_bin");
+        assert!(bin_file.exists());
+
+        installer.unlink("test_pkg", &[cache_file.clone()]).unwrap();
+
+        assert!(!bin_file.exists());
+    }
+
+    #[test]
+    fn test_unlink_noop_when_absent_or_file() {
+        let temp = tempdir().unwrap();
+        let http = MockHttpClient::new();
+        let extractor = MockExtractor::new();
+        let paths = GpmPaths::with_home(temp.path());
+
+        fs::create_dir_all(paths.cache_dir()).unwrap();
+        fs::create_dir_all(paths.bin_dir()).unwrap();
+
+        let cache_file = paths.cache_dir().join("my_bin");
+        fs::write(&cache_file, b"test").unwrap();
+        
+        let bin_file = paths.bin_dir().join("my_bin");
+        fs::write(&bin_file, b"regular").unwrap();
+
+        let installer = GpmInstaller::new(&http, &extractor, paths.clone());
+        
+        // This shouldn't error, and shouldn't remove the regular file
+        installer.unlink("test_pkg", &[cache_file.clone()]).unwrap();
+
+        assert!(bin_file.exists());
+        assert_eq!(fs::read_to_string(&bin_file).unwrap(), "regular");
+        
+        // Also test when it doesn't exist at all
+        fs::remove_file(&bin_file).unwrap();
+        installer.unlink("test_pkg", &[cache_file]).unwrap();
     }
 }
 

@@ -8,6 +8,7 @@ use crate::errors::{GpmError, Result};
 use crate::github::{GithubClient, ReleaseFetcher};
 use crate::installer::Installer;
 use crate::manifest::StateManager;
+use comfy_table::{Cell, Color};
 
 struct OutdatedEntry {
     name: String,
@@ -86,11 +87,11 @@ pub async fn install(
     args: &InstallArgs,
 ) -> Result<()> {
     let repo = &args.repo;
-    let releases = github.get_releases(repo).await?;
 
     let release = if let Some(tag) = &args.version {
         github.get_release_by_tag(repo, tag).await?
     } else {
+        let releases = github.get_releases(repo).await?;
         GithubClient::get_valid_release(releases, args.min_age.as_deref())?.ok_or_else(|| {
             GpmError::PackageNotFoundError(format!("No valid release found for {}", repo))
         })?
@@ -218,7 +219,17 @@ pub async fn format_outdated(
     args: &OutdatedArgs,
 ) -> Result<String> {
     let entries = fetch_outdated(github, state, args, None).await?;
-    Ok(render_outdated_table(&entries))
+    let output = render_outdated_table(&entries);
+    if !output.is_empty() {
+        Ok(output)
+    } else {
+        let packages = state.get_packages()?;
+        if packages.is_empty() {
+            Ok("No packages installed.".to_string())
+        } else {
+            Ok("All packages are up to date.".to_string())
+        }
+    }
 }
 
 pub async fn outdated(
@@ -234,6 +245,13 @@ pub async fn outdated(
     let output = render_outdated_table(&entries);
     if !output.is_empty() {
         println!("{output}");
+    } else {
+        let packages = state.get_packages()?;
+        if packages.is_empty() {
+            println!("No packages installed.");
+        } else {
+            println!("All packages are up to date.");
+        }
     }
     Ok(())
 }
@@ -268,22 +286,30 @@ pub async fn upgrade(
         if let Some(latest) = GithubClient::get_valid_release(releases, args.min_age.as_deref())? {
             let current = pkg.active_version.as_deref().unwrap_or("(none)");
             if current != latest.tag_name {
-                if !args.yes
-                    && !Confirm::new()
-                        .with_prompt(format!(
-                            "Upgrade {} from {} to {}?",
-                            name, current, latest.tag_name
-                        ))
-                        .interact()
-                        .unwrap_or(false)
-                {
-                    continue;
+                if !args.yes {
+                    let decline_in_test = std::env::var("GPM_TEST_DECLINE").is_ok();
+                    let confirmed = if decline_in_test {
+                        false
+                    } else {
+                        Confirm::new()
+                            .with_prompt(format!(
+                                "Upgrade {} from {} to {}?",
+                                name, current, latest.tag_name
+                            ))
+                            .interact_opt()
+                            .unwrap_or(None)
+                            .unwrap_or(false)
+                    };
+                    
+                    if !confirmed {
+                        continue;
+                    }
                 }
 
                 let install_args = InstallArgs {
                     repo: pkg.repo.clone(),
                     version: Some(latest.tag_name.clone()),
-                    min_age: args.min_age.clone(),
+                    min_age: None, // min_age filtering is done by get_valid_release above
                     pattern: args.pattern.clone(),
                 };
                 install(installer, github, state, &install_args).await?;
@@ -293,8 +319,6 @@ pub async fn upgrade(
 
     Ok(())
 }
-
-use comfy_table::{Cell, Color};
 
 pub fn format_list(state: &dyn StateManager) -> Result<String> {
     let packages = state.get_packages()?;
@@ -372,13 +396,21 @@ pub fn prune(installer: &dyn Installer, state: &dyn StateManager, args: &PruneAr
             continue;
         }
 
-        if !args.yes
-            && !Confirm::new()
-                .with_prompt(format!("Prune {} versions: {}?", name, to_prune.join(", ")))
-                .interact()
-                .unwrap_or(false)
-        {
-            continue;
+        if !args.yes {
+            let decline_in_test = std::env::var("GPM_TEST_DECLINE").is_ok();
+            let confirmed = if decline_in_test {
+                false
+            } else {
+                Confirm::new()
+                    .with_prompt(format!("Prune {} versions: {}?", name, to_prune.join(", ")))
+                    .interact_opt()
+                    .unwrap_or(None)
+                    .unwrap_or(false)
+            };
+            
+            if !confirmed {
+                continue;
+            }
         }
 
         for version in to_prune {
@@ -501,7 +533,7 @@ mod tests {
         let output = super::format_outdated(&github, &state, &args)
             .await
             .unwrap();
-        assert_eq!(output, "");
+        assert_eq!(output, "No packages installed.");
     }
 
     #[tokio::test]
@@ -570,6 +602,6 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(output, "");
+        assert_eq!(output, "All packages are up to date.");
     }
 }

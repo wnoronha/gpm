@@ -78,7 +78,13 @@ impl GpmPaths {
     }
 
     pub fn bin_dir(&self) -> PathBuf {
-        self.home_dir.join(".local").join("bin")
+        if let Ok(gpm_bin) = env::var("GPM_BIN_DIR") {
+            return PathBuf::from(gpm_bin);
+        }
+        if self.is_custom {
+            return self.home_dir.join(".local").join("bin");
+        }
+        dirs::executable_dir().unwrap_or_else(|| self.home_dir.join(".local").join("bin"))
     }
 
     pub fn ensure_bin_dir(&self) -> Result<PathBuf> {
